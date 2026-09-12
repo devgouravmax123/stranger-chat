@@ -1,0 +1,101 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum ReportStatus {
+  PENDING
+  REVIEWED
+  RESOLVED
+  DISMISSED
+}
+
+model User {
+  id         String   @id @default(uuid())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  lastSeenAt DateTime @default(now())
+  isBanned   Boolean  @default(false)
+
+  chatsAsUserA Chat[] @relation("ChatUserA")
+  chatsAsUserB Chat[] @relation("ChatUserB")
+
+  sentMessages Message[] @relation("SentMessages")
+
+  reportsMade     Report[] @relation("Reporter")
+  reportsReceived Report[] @relation("Reported")
+
+  blocksMade     Block[] @relation("Blocker")
+  blocksReceived Block[] @relation("Blocked")
+}
+
+model Chat {
+  id        String    @id @default(uuid())
+  createdAt DateTime  @default(now())
+  endedAt   DateTime?
+
+  userAId String
+  userBId String
+
+  userA User @relation("ChatUserA", fields: [userAId], references: [id])
+  userB User @relation("ChatUserB", fields: [userBId], references: [id])
+
+  messages Message[]
+  reports  Report[]
+
+  @@index([userAId])
+  @@index([userBId])
+  @@index([createdAt])
+}
+
+model Message {
+  id        String   @id @default(uuid())
+  content   String
+  createdAt DateTime @default(now())
+
+  chatId   String
+  senderId String
+
+  chat   Chat @relation(fields: [chatId], references: [id])
+  sender User @relation("SentMessages", fields: [senderId], references: [id])
+
+  @@index([chatId, createdAt])
+  @@index([senderId])
+}
+
+model Report {
+  id        String       @id @default(uuid())
+  reason    String
+  status    ReportStatus @default(PENDING)
+  createdAt DateTime     @default(now())
+
+  reporterId String
+  reportedId String
+  chatId     String?
+
+  reporter User  @relation("Reporter", fields: [reporterId], references: [id])
+  reported User  @relation("Reported", fields: [reportedId], references: [id])
+  chat     Chat? @relation(fields: [chatId], references: [id])
+
+  @@index([reportedId])
+  @@index([reporterId])
+  @@index([status])
+}
+
+model Block {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+
+  blockerId String
+  blockedId String
+
+  blocker User @relation("Blocker", fields: [blockerId], references: [id])
+  blocked User @relation("Blocked", fields: [blockedId], references: [id])
+
+  @@unique([blockerId, blockedId])
+  @@index([blockedId])
+}
