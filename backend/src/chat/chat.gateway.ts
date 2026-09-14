@@ -9,6 +9,17 @@ import {
 import { Server, Socket } from 'socket.io';
 import { PrismaService } from '../prisma.service.js';
 
+interface MatchPreferences {
+  language: string;
+  interests: string[];
+  goal: string;
+}
+
+interface WaitingUser {
+  socket: Socket;
+  preferences: MatchPreferences;
+}
+
 @WebSocketGateway({
   cors: {
     origin: 'http://localhost:3000',
@@ -18,28 +29,68 @@ export class ChatGateway {
   @WebSocketServer()
   server!: Server;
 
-  private waitingUsers: Socket[] = [];
+  private waitingUsers: WaitingUser[] = [];
 
-  // socket.id -> Socket.IO room ID
+  // socket.id -> room ID
   private userRooms = new Map<string, string>();
 
-  // socket.id -> Database User ID
+  // socket.id -> database user ID
   private socketUsers = new Map<string, string>();
 
-  // socket.id -> Database Chat ID
+  // socket.id -> database chat ID
   private socketChats = new Map<string, string>();
 
-  constructor(private readonly prisma: PrismaService) {}
+  // socket.id -> matching preferences
+  private userPreferences =
+    new Map<string, MatchPreferences>();
+
+  constructor(
+    private readonly prisma: PrismaService,
+  ) {}
+
+  // ==========================================
+  // CONNECTION
+  // ==========================================
+
+  async handleConnection(socket: Socket) {
+    console.log('User connected:', socket.id);
+
+    const userId = await this.getUserId(socket);
+
+    if (userId) {
+      socket.emit('user_ready', {
+        userId,
+      });
+
+      console.log(
+        'User ready:',
+        userId,
+      );
+    }
+  }
 
   // ==========================================
   // FIND STRANGER
   // ==========================================
 
   @SubscribeMessage('find_stranger')
-  async findStranger(@ConnectedSocket() socket: Socket) {
-    console.log('User wants a stranger:', socket.id);
+  async findStranger(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody()
+    preferences: MatchPreferences,
+  ) {
+    console.log(
+      'User wants a stranger:',
+      socket.id,
+    );
 
-    const userId = await this.getUserId(socket);
+    console.log(
+      'Preferences:',
+      preferences,
+    );
+
+    const userId =
+      await this.getUserId(socket);
 
     if (!userId) {
       return;
@@ -50,25 +101,65 @@ export class ChatGateway {
       return;
     }
 
-    // Already waiting
-    const alreadyWaiting = this.waitingUsers.some(
-      (user) => user.id === socket.id,
+    // Clean preferences
+    const cleanPreferences: MatchPreferences =
+      {
+        language:
+          preferences?.language ||
+          'English',
+
+        interests:
+          Array.isArray(
+            preferences?.interests,
+          )
+            ? preferences.interests
+            : [],
+
+        goal:
+          preferences?.goal ||
+          'casual-chat',
+      };
+
+    // Save preferences
+    this.userPreferences.set(
+      socket.id,
+      cleanPreferences,
     );
+
+    // Already waiting
+    const alreadyWaiting =
+      this.waitingUsers.some(
+        (waitingUser) =>
+          waitingUser.socket.id ===
+          socket.id,
+      );
 
     if (alreadyWaiting) {
       return;
     }
 
     // ==========================================
-    // NO ONE IS WAITING
+    // NO ONE WAITING
     // ==========================================
 
     if (this.waitingUsers.length === 0) {
-      this.waitingUsers.push(socket);
+      this.waitingUsers.push({
+        socket,
+        preferences:
+          cleanPreferences,
+      });
 
       socket.emit('waiting');
 
-      console.log('User added to waiting queue:', socket.id);
+      console.log(
+        'User added to waiting queue:',
+        socket.id,
+      );
+
+      console.log(
+        'Waiting preferences:',
+        cleanPreferences,
+      );
 
       return;
     }
@@ -77,77 +168,269 @@ export class ChatGateway {
     // MATCH USERS
     // ==========================================
 
-    const stranger = this.waitingUsers.shift();
+    const waitingUser =
+      this.waitingUsers.shift();
 
-    if (!stranger) {
+    if (!waitingUser) {
       return;
     }
 
-    const strangerUserId = this.socketUsers.get(stranger.id);
+    const stranger =
+      waitingUser.socket;
+
+    const strangerPreferences =
+      waitingUser.preferences;
+
+    const strangerUserId =
+      this.socketUsers.get(
+        stranger.id,
+      );
 
     if (!strangerUserId) {
-      console.log('Stranger database user ID not found');
+      console.log(
+        'Stranger database user ID not found',
+      );
+
       return;
     }
 
     // ==========================================
-    // CREATE SOCKET.IO ROOM
+    // MATCH SCORE
     // ==========================================
 
-    const roomId = `${stranger.id}-${socket.id}`;
+    const score =
+      this.calculateMatchScore(
+        cleanPreferences,
+        strangerPreferences,
+      );
+
+    console.log(
+      '=================================',
+    );
+
+    console.log(
+      'MATCH FOUND',
+    );
+
+    console.log(
+      'User 1:',
+      socket.id,
+    );
+
+    console.log(
+      'User 1 database ID:',
+      userId,
+    );
+
+    console.log(
+      'User 2:',
+      stranger.id,
+    );
+
+    console.log(
+      'User 2 database ID:',
+      strangerUserId,
+    );
+
+    console.log(
+      'Compatibility score:',
+      score + '%',
+    );
+
+    console.log(
+      '=================================',
+    );
+
+    // ==========================================
+    // CREATE ROOM
+    // ==========================================
+
+    const roomId =
+      `${stranger.id}-${socket.id}`;
 
     stranger.join(roomId);
     socket.join(roomId);
 
-    this.userRooms.set(stranger.id, roomId);
-    this.userRooms.set(socket.id, roomId);
+    this.userRooms.set(
+      stranger.id,
+      roomId,
+    );
+
+    this.userRooms.set(
+      socket.id,
+      roomId,
+    );
 
     // ==========================================
     // CREATE DATABASE CHAT
     // ==========================================
 
-    const chat = await this.prisma.chat.create({
-      data: {
-        userAId: strangerUserId,
-        userBId: userId,
-      },
-    });
+    const chat =
+      await this.prisma.chat.create({
+        data: {
+          userAId:
+            strangerUserId,
 
-    this.socketChats.set(stranger.id, chat.id);
-    this.socketChats.set(socket.id, chat.id);
+          userBId:
+            userId,
+        },
+      });
 
-    console.log('Match found!');
-    console.log('Socket Room:', roomId);
-    console.log('Database Chat ID:', chat.id);
+    this.socketChats.set(
+      stranger.id,
+      chat.id,
+    );
+
+    this.socketChats.set(
+      socket.id,
+      chat.id,
+    );
+
+    console.log(
+      'Database Chat ID:',
+      chat.id,
+    );
 
     // ==========================================
-    // GET CHAT HISTORY
+    // CHAT HISTORY
     // ==========================================
 
-    const messages = await this.prisma.message.findMany({
-      where: {
-        chatId: chat.id,
-      },
-      orderBy: {
-        createdAt: 'asc',
-      },
-    });
+    const messages =
+      await this.prisma.message.findMany(
+        {
+          where: {
+            chatId: chat.id,
+          },
 
-    console.log('Chat history:', messages.length, 'messages');
+          orderBy: {
+            createdAt: 'asc',
+          },
+        },
+      );
 
-    this.server.to(roomId).emit('chat_history', {
-      messages,
-      userId,
-    });
+    console.log(
+      'Chat history:',
+      messages.length,
+      'messages',
+    );
+
+    // ==========================================
+    // SEND CHAT HISTORY
+    // ==========================================
+
+    stranger.emit(
+      'chat_history',
+      {
+        messages,
+        userId:
+          strangerUserId,
+      },
+    );
+
+    socket.emit(
+      'chat_history',
+      {
+        messages,
+        userId,
+      },
+    );
 
     // ==========================================
     // MATCHED
     // ==========================================
 
-    this.server.to(roomId).emit('matched', {
-      roomId,
-      userId,
-    });
+    // IMPORTANT:
+    //
+    // Each user receives:
+    //
+    // userId         = THEIR database ID
+    // strangerUserId = OTHER user's database ID
+    //
+    // This allows the frontend to send
+    // a friend request to the stranger.
+
+    stranger.emit('matched', {
+  roomId,
+  userId: strangerUserId,
+  strangerUserId: userId,
+  score,
+});
+
+socket.emit('matched', {
+  roomId,
+  userId,
+  strangerUserId,
+  score,
+});
+  }
+
+  // ==========================================
+  // MATCH SCORE
+  // ==========================================
+
+  private calculateMatchScore(
+    user1: MatchPreferences,
+    user2: MatchPreferences,
+  ): number {
+    let score = 0;
+
+    // LANGUAGE
+    if (
+      user1.language.toLowerCase() ===
+      user2.language.toLowerCase()
+    ) {
+      score += 40;
+    }
+
+    // INTERESTS
+
+    const interests1 =
+      new Set(
+        user1.interests.map(
+          (interest) =>
+            interest.toLowerCase(),
+        ),
+      );
+
+    const interests2 =
+      new Set(
+        user2.interests.map(
+          (interest) =>
+            interest.toLowerCase(),
+        ),
+      );
+
+    const commonInterests =
+      [...interests1].filter(
+        (interest) =>
+          interests2.has(interest),
+      );
+
+    const allInterests =
+      new Set([
+        ...interests1,
+        ...interests2,
+      ]);
+
+    if (allInterests.size > 0) {
+      const interestRatio =
+        commonInterests.length /
+        allInterests.size;
+
+      score +=
+        interestRatio * 40;
+    }
+
+    // GOAL
+
+    if (
+      user1.goal.toLowerCase() ===
+      user2.goal.toLowerCase()
+    ) {
+      score += 20;
+    }
+
+    return Math.round(score);
   }
 
   // ==========================================
@@ -157,37 +440,75 @@ export class ChatGateway {
   @SubscribeMessage('send_message')
   async sendMessage(
     @ConnectedSocket() socket: Socket,
-    @MessageBody() data: { text: string },
+
+    @MessageBody()
+    data: { text: string },
   ) {
-    const roomId = this.userRooms.get(socket.id);
-    const userId = this.socketUsers.get(socket.id);
-    const chatId = this.socketChats.get(socket.id);
+    const roomId =
+      this.userRooms.get(
+        socket.id,
+      );
 
-    if (!roomId || !userId || !chatId) {
+    const userId =
+      this.socketUsers.get(
+        socket.id,
+      );
+
+    const chatId =
+      this.socketChats.get(
+        socket.id,
+      );
+
+    if (
+      !roomId ||
+      !userId ||
+      !chatId
+    ) {
       return;
     }
 
-    if (!data?.text?.trim()) {
+    if (
+      !data?.text?.trim()
+    ) {
       return;
     }
 
-    const text = data.text.trim();
+    const text =
+      data.text.trim();
 
-    const message = await this.prisma.message.create({
-      data: {
-        content: text,
-        chatId,
-        senderId: userId,
-      },
-    });
+    const message =
+      await this.prisma.message.create(
+        {
+          data: {
+            content: text,
 
-    console.log('Message saved:', message.id);
+            chatId,
 
-    this.server.to(roomId).emit('receive_message', {
-      text: message.content,
-      sender: socket.id,
-      timestamp: message.createdAt.getTime(),
-    });
+            senderId: userId,
+          },
+        },
+      );
+
+    console.log(
+      'Message saved:',
+      message.id,
+    );
+
+    this.server
+      .to(roomId)
+      .emit(
+        'receive_message',
+        {
+          text:
+            message.content,
+
+          sender:
+            socket.id,
+
+          timestamp:
+            message.createdAt.getTime(),
+        },
+      );
   }
 
   // ==========================================
@@ -195,14 +516,24 @@ export class ChatGateway {
   // ==========================================
 
   @SubscribeMessage('typing')
-  typing(@ConnectedSocket() socket: Socket) {
-    const roomId = this.userRooms.get(socket.id);
+  typing(
+    @ConnectedSocket()
+    socket: Socket,
+  ) {
+    const roomId =
+      this.userRooms.get(
+        socket.id,
+      );
 
     if (!roomId) {
       return;
     }
 
-    socket.to(roomId).emit('stranger_typing');
+    socket
+      .to(roomId)
+      .emit(
+        'stranger_typing',
+      );
   }
 
   // ==========================================
@@ -210,14 +541,24 @@ export class ChatGateway {
   // ==========================================
 
   @SubscribeMessage('stop_typing')
-  stopTyping(@ConnectedSocket() socket: Socket) {
-    const roomId = this.userRooms.get(socket.id);
+  stopTyping(
+    @ConnectedSocket()
+    socket: Socket,
+  ) {
+    const roomId =
+      this.userRooms.get(
+        socket.id,
+      );
 
     if (!roomId) {
       return;
     }
 
-    socket.to(roomId).emit('stranger_stopped_typing');
+    socket
+      .to(roomId)
+      .emit(
+        'stranger_stopped_typing',
+      );
   }
 
   // ==========================================
@@ -225,7 +566,10 @@ export class ChatGateway {
   // ==========================================
 
   @SubscribeMessage('end_chat')
-  async endChat(@ConnectedSocket() socket: Socket) {
+  async endChat(
+    @ConnectedSocket()
+    socket: Socket,
+  ) {
     await this.leaveChat(socket);
   }
 
@@ -234,99 +578,178 @@ export class ChatGateway {
   // ==========================================
 
   @SubscribeMessage('next_stranger')
-  async nextStranger(@ConnectedSocket() socket: Socket) {
-    console.log('User wants next stranger:', socket.id);
+  async nextStranger(
+    @ConnectedSocket()
+    socket: Socket,
+  ) {
+    console.log(
+      'User wants next stranger:',
+      socket.id,
+    );
 
     await this.leaveChat(socket);
 
-    // Immediately search for another stranger
-    await this.findStranger(socket);
+    const preferences =
+      this.userPreferences.get(
+        socket.id,
+      ) ?? {
+        language: 'English',
+        interests: [],
+        goal: 'casual-chat',
+      };
+
+    await this.findStranger(
+      socket,
+      preferences,
+    );
   }
 
   // ==========================================
   // LEAVE CHAT
   // ==========================================
 
-  private async leaveChat(socket: Socket) {
-    const roomId = this.userRooms.get(socket.id);
-    const chatId = this.socketChats.get(socket.id);
+  private async leaveChat(
+    socket: Socket,
+  ) {
+    const roomId =
+      this.userRooms.get(
+        socket.id,
+      );
+
+    const chatId =
+      this.socketChats.get(
+        socket.id,
+      );
 
     if (!roomId) {
       return;
     }
 
-    // Tell the other user
-    socket.to(roomId).emit('stranger_left');
+    // Tell stranger
+    socket
+      .to(roomId)
+      .emit(
+        'stranger_left',
+      );
 
     // ==========================================
-    // MARK CHAT AS ENDED
+    // END DATABASE CHAT
     // ==========================================
 
     if (chatId) {
-      const chat = await this.prisma.chat.findUnique({
-        where: {
-          id: chatId,
-        },
-        select: {
-          endedAt: true,
-        },
-      });
+      const chat =
+        await this.prisma.chat.findUnique(
+          {
+            where: {
+              id: chatId,
+            },
 
-      if (chat && !chat.endedAt) {
-        await this.prisma.chat.update({
-          where: {
-            id: chatId,
+            select: {
+              endedAt: true,
+            },
           },
-          data: {
-            endedAt: new Date(),
-          },
-        });
+        );
 
-        console.log('Chat ended:', chatId);
+      if (
+        chat &&
+        !chat.endedAt
+      ) {
+        await this.prisma.chat.update(
+          {
+            where: {
+              id: chatId,
+            },
+
+            data: {
+              endedAt:
+                new Date(),
+            },
+          },
+        );
+
+        console.log(
+          'Chat ended:',
+          chatId,
+        );
       }
     }
 
     socket.leave(roomId);
 
-    this.userRooms.delete(socket.id);
-    this.socketChats.delete(socket.id);
+    this.userRooms.delete(
+      socket.id,
+    );
+
+    this.socketChats.delete(
+      socket.id,
+    );
   }
 
   // ==========================================
   // DISCONNECT
   // ==========================================
 
-  async handleDisconnect(socket: Socket) {
-    console.log('User disconnected:', socket.id);
-
-    // Remove from waiting queue
-    this.waitingUsers = this.waitingUsers.filter(
-      (user) => user.id !== socket.id,
+  async handleDisconnect(
+    socket: Socket,
+  ) {
+    console.log(
+      'User disconnected:',
+      socket.id,
     );
 
-    await this.leaveChat(socket);
+    // Remove from waiting queue
+    this.waitingUsers =
+      this.waitingUsers.filter(
+        (waitingUser) =>
+          waitingUser.socket.id !==
+          socket.id,
+      );
 
-    this.socketUsers.delete(socket.id);
+    await this.leaveChat(
+      socket,
+    );
+
+    this.socketUsers.delete(
+      socket.id,
+    );
+
+    this.userPreferences.delete(
+      socket.id,
+    );
   }
 
   // ==========================================
-  // CREATE ANONYMOUS DATABASE USER
+  // CREATE DATABASE USER
   // ==========================================
 
-  private async getUserId(socket: Socket): Promise<string | null> {
-    const existingUserId = this.socketUsers.get(socket.id);
+  private async getUserId(
+    socket: Socket,
+  ): Promise<string | null> {
+    const existingUserId =
+      this.socketUsers.get(
+        socket.id,
+      );
 
     if (existingUserId) {
       return existingUserId;
     }
 
-    const user = await this.prisma.user.create({
-      data: {},
-    });
+    const user =
+      await this.prisma.user.create(
+        {
+          data: {},
+        },
+      );
 
-    this.socketUsers.set(socket.id, user.id);
+    this.socketUsers.set(
+      socket.id,
+      user.id,
+    );
 
-    console.log('Database user created:', user.id);
+    console.log(
+      'Database user created:',
+      user.id,
+    );
 
     return user.id;
   }

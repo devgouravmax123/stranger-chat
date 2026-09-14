@@ -14,6 +14,13 @@ enum ReportStatus {
   DISMISSED
 }
 
+enum FriendRequestStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  CANCELLED
+}
+
 model User {
   id         String   @id @default(uuid())
   createdAt  DateTime @default(now())
@@ -21,16 +28,34 @@ model User {
   lastSeenAt DateTime @default(now())
   isBanned   Boolean  @default(false)
 
+  // Profile
+  username String? @unique
+  age      Int?
+  gender   String?
+  avatar   String?
+
+  // Stranger chats
   chatsAsUserA Chat[] @relation("ChatUserA")
   chatsAsUserB Chat[] @relation("ChatUserB")
 
+  // Messages
   sentMessages Message[] @relation("SentMessages")
 
+  // Reports
   reportsMade     Report[] @relation("Reporter")
   reportsReceived Report[] @relation("Reported")
 
+  // Blocks
   blocksMade     Block[] @relation("Blocker")
   blocksReceived Block[] @relation("Blocked")
+
+  // Friend requests
+  sentFriendRequests     FriendRequest[] @relation("FriendRequestSender")
+  receivedFriendRequests FriendRequest[] @relation("FriendRequestReceiver")
+
+  // Friendships
+  friendshipsAsUserA Friendship[] @relation("FriendshipUserA")
+  friendshipsAsUserB Friendship[] @relation("FriendshipUserB")
 }
 
 model Chat {
@@ -46,6 +71,10 @@ model Chat {
 
   messages Message[]
   reports  Report[]
+
+  // If this chat belongs to a friendship,
+  // this connects the private friend chat.
+  friendship Friendship? @relation("FriendshipChat")
 
   @@index([userAId])
   @@index([userBId])
@@ -98,4 +127,41 @@ model Block {
 
   @@unique([blockerId, blockedId])
   @@index([blockedId])
+}
+
+model FriendRequest {
+  id        String              @id @default(uuid())
+  status    FriendRequestStatus @default(PENDING)
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+
+  senderId   String
+  receiverId String
+
+  sender   User @relation("FriendRequestSender", fields: [senderId], references: [id])
+  receiver User @relation("FriendRequestReceiver", fields: [receiverId], references: [id])
+
+  @@unique([senderId, receiverId])
+  @@index([receiverId, status])
+  @@index([senderId, status])
+}
+
+model Friendship {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+
+  userAId String
+  userBId String
+
+  userA User @relation("FriendshipUserA", fields: [userAId], references: [id])
+  userB User @relation("FriendshipUserB", fields: [userBId], references: [id])
+
+  // Private 1-to-1 friend chat
+  chatId String? @unique
+
+  chat Chat? @relation("FriendshipChat", fields: [chatId], references: [id])
+
+  @@unique([userAId, userBId])
+  @@index([userAId])
+  @@index([userBId])
 }
