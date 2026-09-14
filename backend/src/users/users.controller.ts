@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 
 import { CreateProfileDto } from './dto/create-profile.dto.js';
+import { UpdatePreferencesDto } from './dto/update-preferences.dto.js';
 import { UsersService } from './users.service.js';
 
 @Controller('users')
@@ -16,7 +17,7 @@ export class UsersController {
   ) {}
 
   // ==========================================
-  // UPDATE PROFILE
+  // UPDATE BASIC PROFILE
   // ==========================================
 
   @Put(':userId/profile')
@@ -25,6 +26,21 @@ export class UsersController {
     @Body() dto: CreateProfileDto,
   ) {
     return this.usersService.updateProfile(
+      userId,
+      dto,
+    );
+  }
+
+  // ==========================================
+  // UPDATE MATCHING PREFERENCES
+  // ==========================================
+
+  @Put(':userId/preferences')
+  async updatePreferences(
+    @Param('userId') userId: string,
+    @Body() dto: UpdatePreferencesDto,
+  ) {
+    return this.usersService.updatePreferences(
       userId,
       dto,
     );

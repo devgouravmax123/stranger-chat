@@ -5,7 +5,9 @@ import {
 } from '@nestjs/common';
 
 import { PrismaService } from '../prisma.service.js';
+
 import { CreateProfileDto } from './dto/create-profile.dto.js';
+import { UpdatePreferencesDto } from './dto/update-preferences.dto.js';
 
 @Injectable()
 export class UsersService {
@@ -14,7 +16,7 @@ export class UsersService {
   ) {}
 
   // ==========================================
-  // UPDATE PROFILE
+  // UPDATE BASIC PROFILE
   // ==========================================
 
   async updateProfile(
@@ -41,7 +43,8 @@ export class UsersService {
     const existingUser =
       await this.prisma.user.findUnique({
         where: {
-          username: dto.username.trim(),
+          username:
+            dto.username.trim(),
         },
       });
 
@@ -51,6 +54,64 @@ export class UsersService {
     ) {
       throw new ConflictException(
         'Username already taken. Please choose another username.',
+      );
+    }
+
+    // ==========================================
+    // UPDATE BASIC PROFILE
+    // ==========================================
+
+    return this.prisma.user.update({
+      where: {
+        id: userId,
+      },
+
+      data: {
+        username:
+          dto.username.trim(),
+
+        age:
+          dto.age,
+
+        gender:
+          dto.gender.trim(),
+
+        avatar:
+          dto.avatar?.trim() ||
+          null,
+      },
+
+      select: {
+        id: true,
+        username: true,
+        age: true,
+        gender: true,
+        avatar: true,
+        language: true,
+        interests: true,
+        goal: true,
+      },
+    });
+  }
+
+  // ==========================================
+  // UPDATE MATCHING PREFERENCES
+  // ==========================================
+
+  async updatePreferences(
+    userId: string,
+    dto: UpdatePreferencesDto,
+  ) {
+    const user =
+      await this.prisma.user.findUnique({
+        where: {
+          id: userId,
+        },
+      });
+
+    if (!user) {
+      throw new NotFoundException(
+        'User not found',
       );
     }
 
@@ -71,7 +132,7 @@ export class UsersService {
         : [];
 
     // ==========================================
-    // UPDATE
+    // UPDATE PREFERENCES
     // ==========================================
 
     return this.prisma.user.update({
@@ -80,17 +141,6 @@ export class UsersService {
       },
 
       data: {
-        username:
-          dto.username.trim(),
-
-        age: dto.age,
-
-        gender:
-          dto.gender.trim(),
-
-        avatar:
-          dto.avatar?.trim() || null,
-
         language:
           dto.language.trim(),
 

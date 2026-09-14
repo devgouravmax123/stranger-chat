@@ -1,46 +1,31 @@
 import {
   IsArray,
-  IsInt,
   IsNotEmpty,
-  IsOptional,
   IsString,
-  Max,
-  Min,
-  MinLength,
 } from 'class-validator';
 
-export class CreateProfileDto {
+export class UpdatePreferencesDto {
   // ==========================================
-  // USERNAME
-  // ==========================================
-
-  @IsString()
-  @IsNotEmpty()
-  @MinLength(3)
-  username!: string;
-
-  // ==========================================
-  // AGE
-  // ==========================================
-
-  @IsInt()
-  @Min(13)
-  @Max(100)
-  age!: number;
-
-  // ==========================================
-  // GENDER
+  // LANGUAGE
   // ==========================================
 
   @IsString()
   @IsNotEmpty()
-  gender!: string;
+  language!: string;
 
   // ==========================================
-  // AVATAR
+  // INTERESTS
   // ==========================================
 
-  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  interests!: string[];
+
+  // ==========================================
+  // LOOKING FOR
+  // ==========================================
+
   @IsString()
-  avatar?: string;
+  @IsNotEmpty()
+  goal!: string;
 }

@@ -1150,37 +1150,83 @@ newSocket.on(
   // PROFILE COMPLETE
   // ==========================================
 
-  const handleProfileComplete =
-    () => {
-      console.log(
-        "Profile completed",
-      );
+const handleProfileComplete = (
+  profile: {
+    username: string;
+    age: number;
+    gender: string;
+    avatar: string;
+  },
+) => {
+  console.log(
+    "Basic profile completed:",
+    profile,
+  );
 
-      setProfileCompleted(
-        true,
-      );
-    };
+  setProfileCompleted(true);
+};
 
   // ==========================================
   // FIND STRANGER
   // ==========================================
 
-  const findStranger = () => {
-    if (!socket) {
-      return;
+const findStranger = async () => {
+  if (!socket || !userId) {
+    return;
+  }
+
+  const preferences: MatchPreferences =
+    {
+      language,
+      interests,
+      goal,
+    };
+
+  console.log(
+    "Saving preferences:",
+    preferences,
+  );
+
+  try {
+    // ==========================================
+    // SAVE PREFERENCES TO DATABASE
+    // ==========================================
+
+    const response =
+      await fetch(
+        `http://localhost:3001/users/${userId}/preferences`,
+        {
+          method: "PUT",
+
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+
+          body: JSON.stringify(
+            preferences,
+          ),
+        },
+      );
+
+    const data =
+      await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        data.message ||
+          "Failed to save preferences",
+      );
     }
 
-    const preferences: MatchPreferences =
-      {
-        language,
-        interests,
-        goal,
-      };
-
     console.log(
-      "Sending preferences:",
-      preferences,
+      "Preferences saved successfully:",
+      data,
     );
+
+    // ==========================================
+    // START MATCHING
+    // ==========================================
 
     setMessages([]);
 
@@ -1202,7 +1248,21 @@ newSocket.on(
       "find_stranger",
       preferences,
     );
-  };
+  } catch (error) {
+    console.error(
+      "Preference save error:",
+      error,
+    );
+
+    setWaiting(false);
+
+    setFriendRequestMessage(
+      error instanceof Error
+        ? error.message
+        : "Could not save your preferences",
+    );
+  }
+};
 
   // ==========================================
   // NEXT STRANGER

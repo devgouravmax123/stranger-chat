@@ -5,43 +5,48 @@ import { useState } from "react";
 type ProfileSetupProps = {
   userId: string;
 
-  // Optional because these will be selected
-  // on the next screen.
-  language?: string;
-  interests?: string[];
-  goal?: string;
-
   onComplete: (profile: {
     username: string;
     age: number;
     gender: string;
     avatar: string;
-    language: string;
-    interests: string[];
-    goal: string;
   }) => void;
 };
 
-const avatars = ["🐶", "🐱", "🦊", "🐸", "🐼", "🐨"];
+const avatars = [
+  "🐶",
+  "🐱",
+  "🦊",
+  "🐸",
+  "🐼",
+  "🐨",
+];
 
 export default function ProfileSetup({
   userId,
-  language = "English",
-  interests = [],
-  goal = "casual-chat",
   onComplete,
 }: ProfileSetupProps) {
   // ==========================================
   // PROFILE STATE
   // ==========================================
 
-  const [username, setUsername] = useState("");
-  const [age, setAge] = useState("");
-  const [gender, setGender] = useState("");
-  const [avatar, setAvatar] = useState("🐶");
+  const [username, setUsername] =
+    useState("");
 
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const [age, setAge] =
+    useState("");
+
+  const [gender, setGender] =
+    useState("");
+
+  const [avatar, setAvatar] =
+    useState("🐶");
+
+  const [saving, setSaving] =
+    useState(false);
+
+  const [error, setError] =
+    useState("");
 
   // ==========================================
   // SUBMIT PROFILE
@@ -54,10 +59,13 @@ export default function ProfileSetup({
     // USERNAME VALIDATION
     // ==========================================
 
-    const trimmedUsername = username.trim();
+    const trimmedUsername =
+      username.trim();
 
     if (!trimmedUsername) {
-      setError("Please enter a username.");
+      setError(
+        "Please enter a username.",
+      );
       return;
     }
 
@@ -90,7 +98,9 @@ export default function ProfileSetup({
     // ==========================================
 
     if (!gender) {
-      setError("Please select your gender.");
+      setError(
+        "Please select your gender.",
+      );
       return;
     }
 
@@ -109,7 +119,7 @@ export default function ProfileSetup({
 
     try {
       // ==========================================
-      // SAVE PROFILE
+      // SAVE BASIC PROFILE
       // ==========================================
 
       const response = await fetch(
@@ -118,26 +128,25 @@ export default function ProfileSetup({
           method: "PUT",
 
           headers: {
-            "Content-Type": "application/json",
+            "Content-Type":
+              "application/json",
           },
 
           body: JSON.stringify({
-            username: trimmedUsername,
-            age: numericAge,
-            gender,
-            avatar,
+            username:
+              trimmedUsername,
 
-            // These are kept as defaults for now.
-            // The next screen will allow the user
-            // to change them.
-            language,
-            interests,
-            goal,
+            age: numericAge,
+
+            gender,
+
+            avatar,
           }),
         },
       );
 
-      const data = await response.json();
+      const data =
+        await response.json();
 
       // ==========================================
       // BACKEND ERROR
@@ -154,8 +163,12 @@ export default function ProfileSetup({
           setError(
             "That username is already taken. Please choose another one.",
           );
-        } else if (Array.isArray(data.message)) {
-          setError(data.message.join(", "));
+        } else if (
+          Array.isArray(data.message)
+        ) {
+          setError(
+            data.message.join(", "),
+          );
         } else {
           setError(
             data.message ||
@@ -167,25 +180,26 @@ export default function ProfileSetup({
       }
 
       console.log(
-        "Profile saved successfully:",
+        "Basic profile saved:",
         data,
       );
 
       // ==========================================
-      // MOVE TO NEXT SCREEN
+      // MOVE TO PREFERENCES SCREEN
       // ==========================================
 
       onComplete({
-        username: data.username,
-        age: data.age,
-        gender: data.gender,
-        avatar: data.avatar,
-        language:
-          data.language ?? language,
-        interests:
-          data.interests ?? interests,
-        goal:
-          data.goal ?? goal,
+        username:
+          data.username,
+
+        age:
+          data.age,
+
+        gender:
+          data.gender,
+
+        avatar:
+          data.avatar,
       });
     } catch (error) {
       console.error(
@@ -225,6 +239,7 @@ export default function ProfileSetup({
       {/* ====================================== */}
 
       <div className="mt-6">
+
         <label className="block text-sm font-medium text-zinc-700 mb-2">
           Username
         </label>
@@ -233,7 +248,9 @@ export default function ProfileSetup({
           type="text"
           value={username}
           onChange={(event) =>
-            setUsername(event.target.value)
+            setUsername(
+              event.target.value,
+            )
           }
           placeholder="Enter your username"
           maxLength={20}
@@ -244,6 +261,7 @@ export default function ProfileSetup({
         <p className="text-xs text-zinc-400 mt-1">
           3–20 characters
         </p>
+
       </div>
 
       {/* ====================================== */}
@@ -251,6 +269,7 @@ export default function ProfileSetup({
       {/* ====================================== */}
 
       <div className="mt-5">
+
         <label className="block text-sm font-medium text-zinc-700 mb-2">
           Age
         </label>
@@ -259,7 +278,9 @@ export default function ProfileSetup({
           type="number"
           value={age}
           onChange={(event) =>
-            setAge(event.target.value)
+            setAge(
+              event.target.value,
+            )
           }
           placeholder="Enter your age"
           min={13}
@@ -267,6 +288,7 @@ export default function ProfileSetup({
           disabled={saving}
           className="w-full border border-zinc-300 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-zinc-400 disabled:bg-zinc-100"
         />
+
       </div>
 
       {/* ====================================== */}
@@ -274,6 +296,7 @@ export default function ProfileSetup({
       {/* ====================================== */}
 
       <div className="mt-5">
+
         <label className="block text-sm font-medium text-zinc-700 mb-2">
           Gender
         </label>
@@ -281,7 +304,9 @@ export default function ProfileSetup({
         <select
           value={gender}
           onChange={(event) =>
-            setGender(event.target.value)
+            setGender(
+              event.target.value,
+            )
           }
           disabled={saving}
           className="w-full border border-zinc-300 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-zinc-400 disabled:bg-zinc-100"
@@ -306,6 +331,7 @@ export default function ProfileSetup({
             Prefer not to say
           </option>
         </select>
+
       </div>
 
       {/* ====================================== */}
@@ -313,11 +339,13 @@ export default function ProfileSetup({
       {/* ====================================== */}
 
       <div className="mt-6">
+
         <label className="block text-sm font-medium text-zinc-700 mb-3">
           Choose your avatar
         </label>
 
         <div className="flex justify-center gap-3 flex-wrap">
+
           {avatars.map((item) => (
             <button
               key={item}
@@ -335,7 +363,9 @@ export default function ProfileSetup({
               {item}
             </button>
           ))}
+
         </div>
+
       </div>
 
       {/* ====================================== */}
@@ -344,9 +374,11 @@ export default function ProfileSetup({
 
       {error && (
         <div className="mt-5 rounded-xl bg-red-50 border border-red-200 px-4 py-3">
+
           <p className="text-sm text-red-600 text-center">
             {error}
           </p>
+
         </div>
       )}
 
@@ -363,6 +395,7 @@ export default function ProfileSetup({
           ? "Saving profile..."
           : "Continue"}
       </button>
+
     </div>
   );
 }
