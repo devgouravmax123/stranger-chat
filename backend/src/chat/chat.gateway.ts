@@ -20,6 +20,17 @@ interface WaitingUser {
   preferences: MatchPreferences;
 }
 
+interface UserProfile {
+  id: string;
+  username: string | null;
+  age: number | null;
+  gender: string | null;
+  avatar: string | null;
+  language: string | null;
+  interests: string[];
+  goal: string | null;
+}
+
 @WebSocketGateway({
   cors: {
     origin: 'http://localhost:3000',
@@ -62,10 +73,7 @@ export class ChatGateway {
         userId,
       });
 
-      console.log(
-        'User ready:',
-        userId,
-      );
+      console.log('User ready:', userId);
     }
   }
 
@@ -102,23 +110,22 @@ export class ChatGateway {
     }
 
     // Clean preferences
-    const cleanPreferences: MatchPreferences =
-      {
-        language:
-          preferences?.language ||
-          'English',
+    const cleanPreferences: MatchPreferences = {
+      language:
+        preferences?.language ||
+        'English',
 
-        interests:
-          Array.isArray(
-            preferences?.interests,
-          )
-            ? preferences.interests
-            : [],
+      interests:
+        Array.isArray(
+          preferences?.interests,
+        )
+          ? preferences.interests
+          : [],
 
-        goal:
-          preferences?.goal ||
-          'casual-chat',
-      };
+      goal:
+        preferences?.goal ||
+        'casual-chat',
+    };
 
     // Save preferences
     this.userPreferences.set(
@@ -208,9 +215,7 @@ export class ChatGateway {
       '=================================',
     );
 
-    console.log(
-      'MATCH FOUND',
-    );
+    console.log('MATCH FOUND');
 
     console.log(
       'User 1:',
@@ -296,17 +301,15 @@ export class ChatGateway {
     // ==========================================
 
     const messages =
-      await this.prisma.message.findMany(
-        {
-          where: {
-            chatId: chat.id,
-          },
-
-          orderBy: {
-            createdAt: 'asc',
-          },
+      await this.prisma.message.findMany({
+        where: {
+          chatId: chat.id,
         },
-      );
+
+        orderBy: {
+          createdAt: 'asc',
+        },
+      });
 
     console.log(
       'Chat history:',
@@ -336,32 +339,70 @@ export class ChatGateway {
     );
 
     // ==========================================
+    // GET BOTH USER PROFILES
+    // ==========================================
+
+    const strangerProfile =
+      await this.getUserProfile(
+        strangerUserId,
+      );
+
+    const userProfile =
+      await this.getUserProfile(
+        userId,
+      );
+
+    // ==========================================
     // MATCHED
     // ==========================================
 
-    // IMPORTANT:
-    //
-    // Each user receives:
-    //
-    // userId         = THEIR database ID
-    // strangerUserId = OTHER user's database ID
-    //
-    // This allows the frontend to send
-    // a friend request to the stranger.
-
     stranger.emit('matched', {
-  roomId,
-  userId: strangerUserId,
-  strangerUserId: userId,
-  score,
-});
+      roomId,
+      userId: strangerUserId,
+      strangerUserId: userId,
+      score,
 
-socket.emit('matched', {
-  roomId,
-  userId,
-  strangerUserId,
-  score,
-});
+      strangerProfile:
+        userProfile,
+    });
+
+    socket.emit('matched', {
+      roomId,
+      userId,
+      strangerUserId,
+      score,
+
+      strangerProfile:
+        strangerProfile,
+    });
+  }
+
+  // ==========================================
+  // GET USER PROFILE
+  // ==========================================
+
+  private async getUserProfile(
+    userId: string,
+  ): Promise<UserProfile | null> {
+    const user =
+      await this.prisma.user.findUnique({
+        where: {
+          id: userId,
+        },
+
+        select: {
+          id: true,
+          username: true,
+          age: true,
+          gender: true,
+          avatar: true,
+          language: true,
+          interests: true,
+          goal: true,
+        },
+      });
+
+    return user;
   }
 
   // ==========================================
@@ -375,6 +416,7 @@ socket.emit('matched', {
     let score = 0;
 
     // LANGUAGE
+
     if (
       user1.language.toLowerCase() ===
       user2.language.toLowerCase()
@@ -434,7 +476,7 @@ socket.emit('matched', {
   }
 
   // ==========================================
-  // SEND MESSAGE
+  // SEND STRANGER MESSAGE
   // ==========================================
 
   @SubscribeMessage('send_message')
@@ -477,23 +519,24 @@ socket.emit('matched', {
       data.text.trim();
 
     const message =
-      await this.prisma.message.create(
-        {
-          data: {
-            content: text,
-
-            chatId,
-
-            senderId: userId,
-          },
+      await this.prisma.message.create({
+        data: {
+          content: text,
+          chatId,
+          senderId: userId,
         },
-      );
+      });
 
     console.log(
       'Message saved:',
       message.id,
     );
 
+    // IMPORTANT:
+    // Send database user ID.
+    // Frontend uses this to decide
+    // whether the message belongs
+    // to the current user.
     this.server
       .to(roomId)
       .emit(
@@ -502,8 +545,8 @@ socket.emit('matched', {
           text:
             message.content,
 
-          sender:
-            socket.id,
+          senderId:
+            userId,
 
           timestamp:
             message.createdAt.getTime(),
@@ -638,34 +681,30 @@ socket.emit('matched', {
 
     if (chatId) {
       const chat =
-        await this.prisma.chat.findUnique(
-          {
-            where: {
-              id: chatId,
-            },
-
-            select: {
-              endedAt: true,
-            },
+        await this.prisma.chat.findUnique({
+          where: {
+            id: chatId,
           },
-        );
+
+          select: {
+            endedAt: true,
+          },
+        });
 
       if (
         chat &&
         !chat.endedAt
       ) {
-        await this.prisma.chat.update(
-          {
-            where: {
-              id: chatId,
-            },
-
-            data: {
-              endedAt:
-                new Date(),
-            },
+        await this.prisma.chat.update({
+          where: {
+            id: chatId,
           },
-        );
+
+          data: {
+            endedAt:
+              new Date(),
+          },
+        });
 
         console.log(
           'Chat ended:',
@@ -698,6 +737,7 @@ socket.emit('matched', {
     );
 
     // Remove from waiting queue
+
     this.waitingUsers =
       this.waitingUsers.filter(
         (waitingUser) =>
@@ -735,11 +775,9 @@ socket.emit('matched', {
     }
 
     const user =
-      await this.prisma.user.create(
-        {
-          data: {},
-        },
-      );
+      await this.prisma.user.create({
+        data: {},
+      });
 
     this.socketUsers.set(
       socket.id,

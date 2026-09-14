@@ -28,32 +28,58 @@ model User {
   lastSeenAt DateTime @default(now())
   isBanned   Boolean  @default(false)
 
-  // Profile
+  // ==========================================
+  // PROFILE
+  // ==========================================
+
   username String? @unique
   age      Int?
   gender   String?
   avatar   String?
 
-  // Stranger chats
+  // Matching / profile information
+  language  String?  @default("English")
+  interests String[] @default([])
+  goal      String?  @default("casual-chat")
+
+  // ==========================================
+  // STRANGER CHATS
+  // ==========================================
+
   chatsAsUserA Chat[] @relation("ChatUserA")
   chatsAsUserB Chat[] @relation("ChatUserB")
 
-  // Messages
+  // ==========================================
+  // MESSAGES
+  // ==========================================
+
   sentMessages Message[] @relation("SentMessages")
 
-  // Reports
+  // ==========================================
+  // REPORTS
+  // ==========================================
+
   reportsMade     Report[] @relation("Reporter")
   reportsReceived Report[] @relation("Reported")
 
-  // Blocks
+  // ==========================================
+  // BLOCKS
+  // ==========================================
+
   blocksMade     Block[] @relation("Blocker")
   blocksReceived Block[] @relation("Blocked")
 
-  // Friend requests
+  // ==========================================
+  // FRIEND REQUESTS
+  // ==========================================
+
   sentFriendRequests     FriendRequest[] @relation("FriendRequestSender")
   receivedFriendRequests FriendRequest[] @relation("FriendRequestReceiver")
 
-  // Friendships
+  // ==========================================
+  // FRIENDSHIPS
+  // ==========================================
+
   friendshipsAsUserA Friendship[] @relation("FriendshipUserA")
   friendshipsAsUserB Friendship[] @relation("FriendshipUserB")
 }
@@ -72,8 +98,7 @@ model Chat {
   messages Message[]
   reports  Report[]
 
-  // If this chat belongs to a friendship,
-  // this connects the private friend chat.
+  // Private friend chat
   friendship Friendship? @relation("FriendshipChat")
 
   @@index([userAId])

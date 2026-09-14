@@ -1,12 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+
 import { io, Socket } from "socket.io-client";
 
 import ChatHeader from "@/components/ChatHeader";
 import MessageInput from "@/components/MessageInput";
 import MessageList from "@/components/MessageList";
 import ProfileSetup from "@/components/ProfileSetup";
+import UserProfileModal from "@/components/UserProfileModal";
+
+// ==========================================
+// MESSAGE TYPES
+// ==========================================
 
 export type Message = {
   text: string;
@@ -22,7 +32,7 @@ type MatchPreferences = {
 
 type ReceivedMessage = {
   text: string;
-  sender: string;
+  senderId: string;
   timestamp: number;
 };
 
@@ -49,6 +59,10 @@ type MatchedData = {
 type UserReadyData = {
   userId: string;
 };
+
+// ==========================================
+// FRIEND TYPES
+// ==========================================
 
 type Friend = {
   id: string;
@@ -96,25 +110,65 @@ type ReceivedFriendMessage = {
   timestamp: number;
 };
 
+// ==========================================
+// USER PROFILE TYPE
+// ==========================================
+
+type UserProfile = {
+  id: string;
+  username: string | null;
+  age: number | null;
+  gender: string | null;
+  avatar: string | null;
+  language: string | null;
+  interests: string[];
+  goal: string | null;
+};
+
 export default function Home() {
   // ==========================================
   // SOCKET
   // ==========================================
 
-  const [socket, setSocket] = useState<Socket | null>(null);
+  const [socket, setSocket] =
+    useState<Socket | null>(null);
+
+  // ==========================================
+  // USER ID
+  // ==========================================
+
+  const [userId, setUserId] =
+    useState<string | null>(null);
+
+  /*
+   * IMPORTANT:
+   * Socket.IO listeners created inside useEffect([])
+   * can otherwise capture an old userId value.
+   *
+   * This ref always contains the latest user ID.
+   */
+  const userIdRef =
+    useRef<string | null>(null);
 
   // ==========================================
   // STRANGER CHAT STATE
   // ==========================================
 
-  const [matched, setMatched] = useState(false);
-  const [waiting, setWaiting] = useState(false);
-  const [typing, setTyping] = useState(false);
+  const [matched, setMatched] =
+    useState(false);
 
-  const [message, setMessage] = useState("");
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [waiting, setWaiting] =
+    useState(false);
 
-  const [userId, setUserId] = useState<string | null>(null);
+  const [typing, setTyping] =
+    useState(false);
+
+  const [message, setMessage] =
+    useState("");
+
+  const [messages, setMessages] =
+    useState<Message[]>([]);
+
   const [strangerUserId, setStrangerUserId] =
     useState<string | null>(null);
 
@@ -123,6 +177,19 @@ export default function Home() {
 
   const [profileCompleted, setProfileCompleted] =
     useState(false);
+
+  // ==========================================
+  // VIEW PROFILE STATE
+  // ==========================================
+
+  const [viewProfile, setViewProfile] =
+    useState<UserProfile | null>(null);
+
+  const [profileLoading, setProfileLoading] =
+    useState(false);
+
+  const [profileError, setProfileError] =
+    useState("");
 
   // ==========================================
   // FRIEND REQUEST STATE
@@ -138,7 +205,8 @@ export default function Home() {
   // FRIENDS STATE
   // ==========================================
 
-  const [showFriends, setShowFriends] = useState(false);
+  const [showFriends, setShowFriends] =
+    useState(false);
 
   const [friends, setFriends] =
     useState<Friendship[]>([]);
@@ -196,7 +264,9 @@ export default function Home() {
     "Travel",
   ];
 
-  const toggleInterest = (interest: string) => {
+  const toggleInterest = (
+    interest: string,
+  ) => {
     setInterests((previous) =>
       previous.includes(interest)
         ? previous.filter(
@@ -242,10 +312,16 @@ export default function Home() {
 
         setUserId(data.userId);
 
-        // Tell FriendsGateway this user is online
-        newSocket.emit("friend_online", {
-          userId: data.userId,
-        });
+        // IMPORTANT
+        userIdRef.current =
+          data.userId;
+
+        newSocket.emit(
+          "friend_online",
+          {
+            userId: data.userId,
+          },
+        );
       },
     );
 
@@ -271,20 +347,27 @@ export default function Home() {
 
         setUserId(data.userId);
 
+        // IMPORTANT
+        userIdRef.current =
+          data.userId;
+
         const history: Message[] =
-          data.messages.map((item) => ({
-            text: item.content,
+          data.messages.map(
+            (item) => ({
+              text: item.content,
 
-            sender:
-              item.senderId === data.userId
-                ? "me"
-                : "stranger",
+              sender:
+                item.senderId ===
+                data.userId
+                  ? "me"
+                  : "stranger",
 
-            timestamp:
-              new Date(
-                item.createdAt,
-              ).getTime(),
-          }));
+              timestamp:
+                new Date(
+                  item.createdAt,
+                ).getTime(),
+            }),
+          );
 
         setMessages(history);
       },
@@ -297,7 +380,9 @@ export default function Home() {
     newSocket.on(
       "matched",
       (data: MatchedData) => {
-        console.log("Matched!");
+        console.log(
+          "Matched!",
+        );
 
         console.log(
           "Room ID:",
@@ -324,6 +409,10 @@ export default function Home() {
 
         setUserId(data.userId);
 
+        // IMPORTANT
+        userIdRef.current =
+          data.userId;
+
         setStrangerUserId(
           data.strangerUserId,
         );
@@ -339,28 +428,33 @@ export default function Home() {
     // STRANGER MESSAGE
     // ==========================================
 
-    newSocket.on(
-      "receive_message",
-      (data: ReceivedMessage) => {
-        setMessages(
-          (previousMessages) => [
-            ...previousMessages,
-            {
-              text: data.text,
-
-              sender:
-                data.sender ===
-                newSocket.id
-                  ? "me"
-                  : "stranger",
-
-              timestamp:
-                data.timestamp,
-            },
-          ],
-        );
-      },
+newSocket.on(
+  "receive_message",
+  (data: ReceivedMessage) => {
+    console.log(
+      "Stranger message received:",
+      data,
     );
+
+    setMessages(
+      (previousMessages) => [
+        ...previousMessages,
+        {
+          text: data.text,
+
+          sender:
+            data.senderId ===
+            userIdRef.current
+              ? "me"
+              : "stranger",
+
+          timestamp:
+            data.timestamp,
+        },
+      ],
+    );
+  },
+);
 
     // ==========================================
     // STRANGER TYPING
@@ -403,6 +497,8 @@ export default function Home() {
 
         setFriendRequestSent(false);
         setFriendRequestMessage("");
+
+        setViewProfile(null);
       },
     );
 
@@ -412,28 +508,44 @@ export default function Home() {
 
     newSocket.on(
       "friend_room_opened",
-      (data: FriendRoomOpenedData) => {
+      (
+        data: FriendRoomOpenedData,
+      ) => {
         console.log(
           "Friend room opened:",
           data,
         );
 
-        setFriendRoomId(data.roomId);
+        setFriendRoomId(
+          data.roomId,
+        );
+
+        /*
+         * Use userIdRef here.
+         * This guarantees that the current
+         * user's ID is available.
+         */
+
+        const currentUserId =
+          userIdRef.current;
 
         const history: Message[] =
-          data.messages.map((item) => ({
-            text: item.content,
+          data.messages.map(
+            (item) => ({
+              text: item.content,
 
-            sender:
-              item.senderId === userId
-                ? "me"
-                : "stranger",
+              sender:
+                item.senderId ===
+                currentUserId
+                  ? "me"
+                  : "stranger",
 
-            timestamp:
-              new Date(
-                item.createdAt,
-              ).getTime(),
-          }));
+              timestamp:
+                new Date(
+                  item.createdAt,
+                ).getTime(),
+            }),
+          );
 
         setFriendMessages(history);
 
@@ -448,7 +560,9 @@ export default function Home() {
 
     newSocket.on(
       "receive_friend_message",
-      (data: ReceivedFriendMessage) => {
+      (
+        data: ReceivedFriendMessage,
+      ) => {
         console.log(
           "Friend message received:",
           data,
@@ -460,8 +574,16 @@ export default function Home() {
             {
               text: data.text,
 
+              /*
+               * IMPORTANT FIX
+               *
+               * Always compare the database
+               * senderId with the current user's
+               * database ID.
+               */
               sender:
-                data.senderId === userId
+                data.senderId ===
+                userIdRef.current
                   ? "me"
                   : "stranger",
 
@@ -479,13 +601,16 @@ export default function Home() {
 
     newSocket.on(
       "friend_room_error",
-      (data: { message: string }) => {
+      (data: {
+        message: string;
+      }) => {
         console.error(
           "Friend room error:",
           data.message,
         );
 
         setFriendChatLoading(false);
+
         setFriendsError(
           data.message ||
             "Could not open private chat",
@@ -524,9 +649,10 @@ export default function Home() {
       setFriendsLoading(true);
       setFriendsError("");
 
-      const response = await fetch(
-        `http://localhost:3001/friends/${userId}`,
-      );
+      const response =
+        await fetch(
+          `http://localhost:3001/friends/${userId}`,
+        );
 
       if (!response.ok) {
         throw new Error(
@@ -556,37 +682,39 @@ export default function Home() {
   // LOAD FRIEND REQUESTS
   // ==========================================
 
-  const loadFriendRequests = async () => {
-    if (!userId) {
-      return;
-    }
-
-    try {
-      const response = await fetch(
-        `http://localhost:3001/friends/requests/${userId}`,
-      );
-
-      if (!response.ok) {
-        throw new Error(
-          "Failed to load friend requests",
-        );
+  const loadFriendRequests =
+    async () => {
+      if (!userId) {
+        return;
       }
 
-      const data: FriendRequest[] =
-        await response.json();
+      try {
+        const response =
+          await fetch(
+            `http://localhost:3001/friends/requests/${userId}`,
+          );
 
-      setFriendRequests(data);
-    } catch (error) {
-      console.error(
-        "Error loading friend requests:",
-        error,
-      );
+        if (!response.ok) {
+          throw new Error(
+            "Failed to load friend requests",
+          );
+        }
 
-      setFriendsError(
-        "Could not load friend requests",
-      );
-    }
-  };
+        const data: FriendRequest[] =
+          await response.json();
+
+        setFriendRequests(data);
+      } catch (error) {
+        console.error(
+          "Error loading friend requests:",
+          error,
+        );
+
+        setFriendsError(
+          "Could not load friend requests",
+        );
+      }
+    };
 
   // ==========================================
   // OPEN FRIENDS
@@ -606,191 +734,199 @@ export default function Home() {
   // SEND FRIEND REQUEST
   // ==========================================
 
-  const sendFriendRequest = async () => {
-    if (
-      !userId ||
-      !strangerUserId
-    ) {
-      console.log(
-        "Missing user IDs",
-      );
-
-      return;
-    }
-
-    try {
-      setFriendRequestMessage("");
-
-      const response = await fetch(
-        "http://localhost:3001/friends/request",
-        {
-          method: "POST",
-
-          headers: {
-            "Content-Type":
-              "application/json",
-          },
-
-          body: JSON.stringify({
-            senderId: userId,
-            receiverId:
-              strangerUserId,
-          }),
-        },
-      );
-
-      const data =
-        await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          data.message ||
-            "Failed to send friend request",
+  const sendFriendRequest =
+    async () => {
+      if (
+        !userId ||
+        !strangerUserId
+      ) {
+        console.log(
+          "Missing user IDs",
         );
+
+        return;
       }
 
-      console.log(
-        "Friend request response:",
-        data,
-      );
+      try {
+        setFriendRequestMessage("");
 
-      setFriendRequestSent(true);
+        const response =
+          await fetch(
+            "http://localhost:3001/friends/request",
+            {
+              method: "POST",
 
-      setFriendRequestMessage(
-        "Friend request sent",
-      );
-    } catch (error) {
-      console.error(
-        "Friend request error:",
-        error,
-      );
+              headers: {
+                "Content-Type":
+                  "application/json",
+              },
 
-      setFriendRequestMessage(
-        error instanceof Error
-          ? error.message
-          : "Failed to send friend request",
-      );
-    }
-  };
+              body: JSON.stringify({
+                senderId: userId,
+                receiverId:
+                  strangerUserId,
+              }),
+            },
+          );
+
+        const data =
+          await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.message ||
+              "Failed to send friend request",
+          );
+        }
+
+        console.log(
+          "Friend request response:",
+          data,
+        );
+
+        setFriendRequestSent(
+          true,
+        );
+
+        setFriendRequestMessage(
+          "Friend request sent",
+        );
+      } catch (error) {
+        console.error(
+          "Friend request error:",
+          error,
+        );
+
+        setFriendRequestMessage(
+          error instanceof Error
+            ? error.message
+            : "Failed to send friend request",
+        );
+      }
+    };
 
   // ==========================================
   // ACCEPT FRIEND REQUEST
   // ==========================================
 
-  const acceptFriendRequest = async (
-    requestId: string,
-  ) => {
-    if (!userId) {
-      return;
-    }
-
-    try {
-      const response = await fetch(
-        `http://localhost:3001/friends/request/${requestId}/accept`,
-        {
-          method: "PUT",
-
-          headers: {
-            "Content-Type":
-              "application/json",
-          },
-
-          body: JSON.stringify({
-            userId,
-          }),
-        },
-      );
-
-      const data =
-        await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          data.message ||
-            "Failed to accept request",
-        );
+  const acceptFriendRequest =
+    async (
+      requestId: string,
+    ) => {
+      if (!userId) {
+        return;
       }
 
-      console.log(
-        "Friend request accepted:",
-        data,
-      );
+      try {
+        const response =
+          await fetch(
+            `http://localhost:3001/friends/request/${requestId}/accept`,
+            {
+              method: "PUT",
 
-      await Promise.all([
-        loadFriends(),
-        loadFriendRequests(),
-      ]);
-    } catch (error) {
-      console.error(
-        "Accept request error:",
-        error,
-      );
+              headers: {
+                "Content-Type":
+                  "application/json",
+              },
 
-      setFriendsError(
-        error instanceof Error
-          ? error.message
-          : "Failed to accept request",
-      );
-    }
-  };
+              body: JSON.stringify({
+                userId,
+              }),
+            },
+          );
+
+        const data =
+          await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.message ||
+              "Failed to accept request",
+          );
+        }
+
+        console.log(
+          "Friend request accepted:",
+          data,
+        );
+
+        await Promise.all([
+          loadFriends(),
+          loadFriendRequests(),
+        ]);
+      } catch (error) {
+        console.error(
+          "Accept request error:",
+          error,
+        );
+
+        setFriendsError(
+          error instanceof Error
+            ? error.message
+            : "Failed to accept request",
+        );
+      }
+    };
 
   // ==========================================
   // REJECT FRIEND REQUEST
   // ==========================================
 
-  const rejectFriendRequest = async (
-    requestId: string,
-  ) => {
-    if (!userId) {
-      return;
-    }
-
-    try {
-      const response = await fetch(
-        `http://localhost:3001/friends/request/${requestId}/reject`,
-        {
-          method: "PUT",
-
-          headers: {
-            "Content-Type":
-              "application/json",
-          },
-
-          body: JSON.stringify({
-            userId,
-          }),
-        },
-      );
-
-      const data =
-        await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          data.message ||
-            "Failed to reject request",
-        );
+  const rejectFriendRequest =
+    async (
+      requestId: string,
+    ) => {
+      if (!userId) {
+        return;
       }
 
-      console.log(
-        "Friend request rejected:",
-        data,
-      );
+      try {
+        const response =
+          await fetch(
+            `http://localhost:3001/friends/request/${requestId}/reject`,
+            {
+              method: "PUT",
 
-      await loadFriendRequests();
-    } catch (error) {
-      console.error(
-        "Reject request error:",
-        error,
-      );
+              headers: {
+                "Content-Type":
+                  "application/json",
+              },
 
-      setFriendsError(
-        error instanceof Error
-          ? error.message
-          : "Failed to reject request",
-      );
-    }
-  };
+              body: JSON.stringify({
+                userId,
+              }),
+            },
+          );
+
+        const data =
+          await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.message ||
+              "Failed to reject request",
+          );
+        }
+
+        console.log(
+          "Friend request rejected:",
+          data,
+        );
+
+        await loadFriendRequests();
+      } catch (error) {
+        console.error(
+          "Reject request error:",
+          error,
+        );
+
+        setFriendsError(
+          error instanceof Error
+            ? error.message
+            : "Failed to reject request",
+        );
+      }
+    };
 
   // ==========================================
   // REMOVE FRIEND
@@ -804,12 +940,13 @@ export default function Home() {
     }
 
     try {
-      const response = await fetch(
-        `http://localhost:3001/friends/${userId}/${friendId}`,
-        {
-          method: "DELETE",
-        },
-      );
+      const response =
+        await fetch(
+          `http://localhost:3001/friends/${userId}/${friendId}`,
+          {
+            method: "DELETE",
+          },
+        );
 
       const data =
         await response.json();
@@ -842,7 +979,7 @@ export default function Home() {
   };
 
   // ==========================================
-  // OPEN 1-TO-1 FRIEND CHAT
+  // OPEN PRIVATE FRIEND CHAT
   // ==========================================
 
   const openFriendChat = (
@@ -855,20 +992,25 @@ export default function Home() {
       return;
     }
 
-    const friend = friendship.friend;
+    const friend =
+      friendship.friend;
 
     console.log(
       "Opening private chat with:",
       friend,
     );
 
-    setSelectedFriend(friend);
+    setSelectedFriend(
+      friend,
+    );
 
     setFriendMessages([]);
 
     setFriendRoomId(null);
 
-    setFriendChatLoading(true);
+    setFriendChatLoading(
+      true,
+    );
 
     setFriendsError("");
 
@@ -882,10 +1024,22 @@ export default function Home() {
   };
 
   // ==========================================
-  // CLOSE FRIEND CHAT
+  // CLOSE PRIVATE FRIEND CHAT
   // ==========================================
 
   const closeFriendChat = () => {
+    if (
+      socket &&
+      friendRoomId
+    ) {
+      socket.emit(
+        "leave_friend_room",
+        {
+          roomId: friendRoomId,
+        },
+      );
+    }
+
     setFriendChatOpen(false);
 
     setSelectedFriend(null);
@@ -895,48 +1049,117 @@ export default function Home() {
     setFriendMessages([]);
 
     setFriendMessage("");
+
+    setViewProfile(null);
   };
 
   // ==========================================
   // SEND FRIEND MESSAGE
   // ==========================================
 
-  const sendFriendMessage = () => {
-    if (
-      !socket ||
-      !userId ||
-      !friendRoomId ||
-      friendMessage.trim() === ""
-    ) {
-      return;
-    }
+  const sendFriendMessage =
+    () => {
+      if (
+        !socket ||
+        !userId ||
+        !friendRoomId ||
+        friendMessage.trim() === ""
+      ) {
+        return;
+      }
 
-    const text =
-      friendMessage.trim();
+      const text =
+        friendMessage.trim();
 
-    socket.emit(
-      "send_friend_message",
-      {
-        roomId: friendRoomId,
-        senderId: userId,
-        text,
-      },
-    );
+      socket.emit(
+        "send_friend_message",
+        {
+          roomId:
+            friendRoomId,
 
-    setFriendMessage("");
-  };
+          senderId:
+            userId,
+
+          text,
+        },
+      );
+
+      setFriendMessage("");
+    };
+
+  // ==========================================
+  // VIEW USER PROFILE
+  // ==========================================
+
+  const openUserProfile =
+    async (
+      targetUserId: string | null,
+    ) => {
+      if (!targetUserId) {
+        return;
+      }
+
+      try {
+        setProfileLoading(true);
+        setProfileError("");
+        setViewProfile(null);
+
+        const response =
+          await fetch(
+            `http://localhost:3001/users/${targetUserId}/profile`,
+          );
+
+        const data =
+          await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.message ||
+              "Failed to load profile",
+          );
+        }
+
+        setViewProfile(data);
+      } catch (error) {
+        console.error(
+          "Profile loading error:",
+          error,
+        );
+
+        setProfileError(
+          error instanceof Error
+            ? error.message
+            : "Could not load profile",
+        );
+      } finally {
+        setProfileLoading(false);
+      }
+    };
+
+  // ==========================================
+  // CLOSE PROFILE
+  // ==========================================
+
+  const closeUserProfile =
+    () => {
+      setViewProfile(null);
+      setProfileError("");
+    };
 
   // ==========================================
   // PROFILE COMPLETE
   // ==========================================
 
-  const handleProfileComplete = () => {
-    console.log(
-      "Profile completed",
-    );
+  const handleProfileComplete =
+    () => {
+      console.log(
+        "Profile completed",
+      );
 
-    setProfileCompleted(true);
-  };
+      setProfileCompleted(
+        true,
+      );
+    };
 
   // ==========================================
   // FIND STRANGER
@@ -947,11 +1170,12 @@ export default function Home() {
       return;
     }
 
-    const preferences: MatchPreferences = {
-      language,
-      interests,
-      goal,
-    };
+    const preferences: MatchPreferences =
+      {
+        language,
+        interests,
+        goal,
+      };
 
     console.log(
       "Sending preferences:",
@@ -964,9 +1188,13 @@ export default function Home() {
 
     setTyping(false);
 
-    setFriendRequestSent(false);
+    setFriendRequestSent(
+      false,
+    );
 
-    setFriendRequestMessage("");
+    setFriendRequestMessage(
+      "",
+    );
 
     setStrangerUserId(null);
 
@@ -997,9 +1225,17 @@ export default function Home() {
 
     setStrangerUserId(null);
 
-    setFriendRequestSent(false);
+    setFriendRequestSent(
+      false,
+    );
 
-    setFriendRequestMessage("");
+    setFriendRequestMessage(
+      "",
+    );
+
+    setMessage("");
+
+    setViewProfile(null);
 
     socket.emit(
       "next_stranger",
@@ -1029,9 +1265,17 @@ export default function Home() {
 
     setStrangerUserId(null);
 
-    setFriendRequestSent(false);
+    setFriendRequestSent(
+      false,
+    );
 
-    setFriendRequestMessage("");
+    setFriendRequestMessage(
+      "",
+    );
+
+    setMessage("");
+
+    setViewProfile(null);
   };
 
   // ==========================================
@@ -1146,7 +1390,9 @@ export default function Home() {
           <div className="flex items-center gap-3 px-5 py-4 border-b">
 
             <button
-              onClick={closeFriendChat}
+              onClick={
+                closeFriendChat
+              }
               className="px-3 py-2 rounded-lg bg-zinc-100 text-zinc-800 text-sm hover:bg-zinc-200"
             >
               ← Back
@@ -1158,7 +1404,9 @@ export default function Home() {
 
                 {selectedFriend?.avatar && (
                   <span className="mr-2">
-                    {selectedFriend.avatar}
+                    {
+                      selectedFriend.avatar
+                    }
                   </span>
                 )}
 
@@ -1172,6 +1420,24 @@ export default function Home() {
               </p>
 
             </div>
+
+            {/* VIEW FRIEND PROFILE */}
+
+            <button
+              type="button"
+              onClick={() =>
+                openUserProfile(
+                  selectedFriend?.id ||
+                    null,
+                )
+              }
+              disabled={
+                !selectedFriend?.id
+              }
+              className="px-3 py-2 rounded-lg bg-zinc-100 text-zinc-700 text-sm font-medium hover:bg-zinc-200 disabled:opacity-50"
+            >
+              👤 Profile
+            </button>
 
           </div>
 
@@ -1203,52 +1469,70 @@ export default function Home() {
 
               {/* INPUT */}
 
-              <div className="border-t p-3">
-
-                <div className="flex gap-2">
-
-                  <input
-                    value={
-                      friendMessage
-                    }
-                    onChange={(event) =>
-                      setFriendMessage(
-                        event.target.value,
-                      )
-                    }
-                    onKeyDown={(event) => {
-                      if (
-                        event.key ===
-                        "Enter"
-                      ) {
-                        sendFriendMessage();
-                      }
-                    }}
-                    placeholder="Message your friend..."
-                    className="flex-1 border border-zinc-300 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-zinc-300"
-                  />
-
-                  <button
-                    onClick={
-                      sendFriendMessage
-                    }
-                    disabled={
-                      !friendRoomId ||
-                      friendMessage.trim() ===
-                        ""
-                    }
-                    className="px-5 py-3 rounded-xl bg-zinc-900 text-white text-sm font-medium hover:bg-zinc-700 disabled:bg-zinc-300 disabled:cursor-not-allowed"
-                  >
-                    Send
-                  </button>
-
-                </div>
-
-              </div>
+              <MessageInput
+                message={
+                  friendMessage
+                }
+                setMessage={
+                  setFriendMessage
+                }
+                sendMessage={
+                  sendFriendMessage
+                }
+              />
             </>
           )}
 
         </div>
+
+        {/* PROFILE LOADING */}
+
+        {profileLoading && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+
+            <div className="rounded-xl bg-white px-6 py-5 shadow-xl">
+
+              <p className="text-sm text-zinc-600">
+                Loading profile...
+              </p>
+
+            </div>
+
+          </div>
+        )}
+
+        {/* PROFILE ERROR */}
+
+        {profileError && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+
+            <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl text-center">
+
+              <p className="text-sm text-red-600">
+                {profileError}
+              </p>
+
+              <button
+                type="button"
+                onClick={
+                  closeUserProfile
+                }
+                className="mt-4 rounded-lg bg-zinc-900 px-4 py-2 text-sm text-white"
+              >
+                Close
+              </button>
+
+            </div>
+
+          </div>
+        )}
+
+        <UserProfileModal
+          user={viewProfile}
+          onClose={
+            closeUserProfile
+          }
+        />
 
       </main>
     );
@@ -1280,7 +1564,10 @@ export default function Home() {
 
             <button
               onClick={() => {
-                setShowFriends(false);
+                setShowFriends(
+                  false,
+                );
+
                 setFriendsError("");
               }}
               className="px-4 py-2 rounded-lg bg-zinc-900 text-white text-sm hover:bg-zinc-700"
@@ -1536,7 +1823,9 @@ export default function Home() {
           {/* FRIENDS BUTTON */}
 
           <button
-            onClick={openFriends}
+            onClick={
+              openFriends
+            }
             className="mt-6 w-full border border-zinc-300 text-zinc-800 px-6 py-3 rounded-xl font-medium hover:bg-zinc-100"
           >
             👥 Friends
@@ -1552,9 +1841,12 @@ export default function Home() {
 
             <select
               value={language}
-              onChange={(event) =>
+              onChange={(
+                event,
+              ) =>
                 setLanguage(
-                  event.target.value,
+                  event.target
+                    .value,
                 )
               }
               className="w-full border border-zinc-300 rounded-xl px-4 py-3"
@@ -1595,7 +1887,9 @@ export default function Home() {
               {availableInterests.map(
                 (interest) => (
                   <button
-                    key={interest}
+                    key={
+                      interest
+                    }
                     type="button"
                     onClick={() =>
                       toggleInterest(
@@ -1629,9 +1923,12 @@ export default function Home() {
 
             <select
               value={goal}
-              onChange={(event) =>
+              onChange={(
+                event,
+              ) =>
                 setGoal(
-                  event.target.value,
+                  event.target
+                    .value,
                 )
               }
               className="w-full border border-zinc-300 rounded-xl px-4 py-3"
@@ -1660,7 +1957,9 @@ export default function Home() {
           {!waiting ? (
 
             <button
-              onClick={findStranger}
+              onClick={
+                findStranger
+              }
               className="mt-6 w-full bg-zinc-900 text-white px-6 py-3 rounded-xl font-medium hover:bg-zinc-700"
             >
               Find a Stranger
@@ -1688,15 +1987,27 @@ export default function Home() {
 
         <div className="w-full max-w-lg h-[650px] bg-white rounded-2xl overflow-hidden flex flex-col">
 
-          <ChatHeader />
+          {/* HEADER */}
+
+          <ChatHeader
+            onViewProfile={() =>
+              openUserProfile(
+                strangerUserId,
+              )
+            }
+          />
 
           {/* MATCH SCORE */}
 
-          {matchScore !== null && (
+          {matchScore !==
+            null && (
             <div className="text-center py-2 bg-zinc-100 text-sm text-zinc-600">
               Match compatibility:{" "}
               <strong>
-                {matchScore.toFixed(0)}%
+                {matchScore.toFixed(
+                  0,
+                )}
+                %
               </strong>
             </div>
           )}
@@ -1730,7 +2041,9 @@ export default function Home() {
             {friendRequestMessage &&
               !friendRequestSent && (
                 <p className="mt-2 text-center text-sm text-red-600">
-                  {friendRequestMessage}
+                  {
+                    friendRequestMessage
+                  }
                 </p>
               )}
 
@@ -1739,7 +2052,9 @@ export default function Home() {
           {/* MESSAGES */}
 
           <MessageList
-            messages={messages}
+            messages={
+              messages
+            }
           />
 
           {/* TYPING */}
@@ -1765,7 +2080,9 @@ export default function Home() {
           {/* NEXT */}
 
           <button
-            onClick={nextStranger}
+            onClick={
+              nextStranger
+            }
             className="border-t py-3 text-sm font-medium text-blue-600 hover:bg-blue-50"
           >
             Next Stranger
@@ -1783,6 +2100,57 @@ export default function Home() {
         </div>
 
       )}
+
+      {/* PROFILE LOADING */}
+
+      {profileLoading && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+
+          <div className="rounded-xl bg-white px-6 py-5 shadow-xl">
+
+            <p className="text-sm text-zinc-600">
+              Loading profile...
+            </p>
+
+          </div>
+
+        </div>
+      )}
+
+      {/* PROFILE ERROR */}
+
+      {profileError && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+
+          <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl text-center">
+
+            <p className="text-sm text-red-600">
+              {profileError}
+            </p>
+
+            <button
+              type="button"
+              onClick={
+                closeUserProfile
+              }
+              className="mt-4 rounded-lg bg-zinc-900 px-4 py-2 text-sm text-white"
+            >
+              Close
+            </button>
+
+          </div>
+
+        </div>
+      )}
+
+      {/* PROFILE MODAL */}
+
+      <UserProfileModal
+        user={viewProfile}
+        onClose={
+          closeUserProfile
+        }
+      />
 
     </main>
   );
