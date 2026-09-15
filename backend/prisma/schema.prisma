@@ -50,10 +50,11 @@ model User {
   chatsAsUserB Chat[] @relation("ChatUserB")
 
   // ==========================================
-  // MESSAGES
+  // MESSAGES & REACTIONS
   // ==========================================
 
-  sentMessages Message[] @relation("SentMessages")
+  sentMessages Message[]  @relation("SentMessages")
+  reactions    Reaction[]
 
   // ==========================================
   // REPORTS
@@ -111,6 +112,20 @@ model Message {
   content   String
   createdAt DateTime @default(now())
 
+  // Delivery & Seen & Delete Status
+  status      String    @default("sent")
+  deliveredAt DateTime?
+  seenAt      DateTime?
+  deletedAt   DateTime?
+
+  // Reply Relationship
+  replyToId String?
+  replyTo   Message?  @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies   Message[] @relation("MessageReplies")
+
+  // Reactions
+  reactions Reaction[]
+
   chatId   String
   senderId String
 
@@ -119,6 +134,23 @@ model Message {
 
   @@index([chatId, createdAt])
   @@index([senderId])
+  @@index([replyToId])
+}
+
+model Reaction {
+  id        String   @id @default(uuid())
+  emoji     String
+  createdAt DateTime @default(now())
+
+  messageId String
+  userId    String
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId, emoji])
+  @@index([messageId])
+  @@index([userId])
 }
 
 model Report {
@@ -152,6 +184,7 @@ model Block {
 
   @@unique([blockerId, blockedId])
   @@index([blockedId])
+  @@index([blockerId])
 }
 
 model FriendRequest {
