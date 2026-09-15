@@ -1,6 +1,7 @@
 import {
   ConnectedSocket,
   MessageBody,
+  OnGatewayInit,
   SubscribeMessage,
   WebSocketGateway,
   WebSocketServer,
@@ -9,6 +10,7 @@ import {
 import { Server, Socket } from 'socket.io';
 import { PrismaService } from '../prisma.service.js';
 import { RedisService } from '../redis/redis.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 
 interface MatchPreferences {
   language: string;
@@ -69,7 +71,7 @@ interface FriendImageMessageData {
     origin: 'http://localhost:3000',
   },
 })
-export class ChatGateway {
+export class ChatGateway implements OnGatewayInit {
   @WebSocketServer()
   server!: Server;
 
@@ -83,7 +85,19 @@ export class ChatGateway {
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
+    private readonly notifications: NotificationsService,
   ) {}
+
+  afterInit(server: Server) {
+    this.notifications.registerNotificationEmitter((userId: string, notification: any) => {
+      // Find all connected sockets belonging to this userId
+      for (const [sockId, uid] of this.inMemorySocketUsers.entries()) {
+        if (uid === userId) {
+          this.server.to(sockId).emit('new_notification', notification);
+        }
+      }
+    });
+  }
 
   // ==========================================
   // CONNECTION
@@ -95,15 +109,41 @@ export class ChatGateway {
     const userId = await this.getUserId(socket);
 
     if (userId) {
+      this.inMemorySocketUsers.set(socket.id, userId);
       if (this.redis.getIsConnected()) {
         await this.redis.setPresence(socket.id, 'online');
         await this.redis.setSocketMapping(socket.id, { userId });
-      } else {
-        this.inMemorySocketUsers.set(socket.id, userId);
       }
 
       socket.emit('user_ready', { userId });
       console.log('User ready:', userId);
+    }
+  }
+
+  @SubscribeMessage('friend_online')
+  async handleFriendOnline(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody() data: { userId: string },
+  ) {
+    if (!data?.userId) return;
+    this.inMemorySocketUsers.set(socket.id, data.userId);
+    if (this.redis.getIsConnected()) {
+      await this.redis.setPresence(socket.id, 'online');
+      await this.redis.setSocketMapping(socket.id, { userId: data.userId });
+    }
+  }
+
+  @SubscribeMessage('leave_friend_room')
+  async handleLeaveFriendRoom(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody() data: { roomId: string },
+  ) {
+    if (!data?.roomId) return;
+    socket.leave(data.roomId);
+    this.inMemoryUserRooms.delete(socket.id);
+    this.inMemorySocketChats.delete(socket.id);
+    if (this.redis.getIsConnected()) {
+      await this.redis.setSocketMapping(socket.id, { roomId: undefined, chatId: undefined });
     }
   }
 
@@ -633,9 +673,52 @@ export class ChatGateway {
   @SubscribeMessage('mark_seen')
   async markSeen(
     @ConnectedSocket() socket: Socket,
-    @MessageBody() data: { messageIds?: string[] },
+    @MessageBody() data: { messageIds?: string[]; chatId?: string; roomId?: string },
   ) {
-    const { roomId, chatId, userId } = await this.getSocketContext(socket);
+    const context = await this.getSocketContext(socket);
+    let roomId = data?.roomId || context.roomId;
+    let chatId = data?.chatId || context.chatId;
+    let userId = context.userId;
+
+    if (!userId) {
+      userId = (await this.getUserId(socket)) || undefined;
+    }
+
+    if (!chatId && data?.messageIds?.length) {
+      const firstMsg = await this.prisma.message.findUnique({
+        where: { id: data.messageIds[0] },
+        select: { chatId: true },
+      });
+      if (firstMsg) chatId = firstMsg.chatId;
+    }
+
+    if (!chatId && roomId && roomId.startsWith('friend-')) {
+      const parts = roomId.replace('friend-', '').split('-');
+      if (parts.length === 2) {
+        const chat = await this.prisma.chat.findFirst({
+          where: {
+            OR: [
+              { userAId: parts[0], userBId: parts[1] },
+              { userAId: parts[1], userBId: parts[0] },
+            ],
+          },
+        });
+        if (chat) chatId = chat.id;
+      }
+    }
+
+    if (!roomId && chatId) {
+      const chat = await this.prisma.chat.findUnique({
+        where: { id: chatId },
+        include: { friendship: true },
+      });
+      if (chat) {
+        roomId = chat.friendship
+          ? `friend-${[chat.userAId, chat.userBId].sort().join('-')}`
+          : chat.id;
+      }
+    }
+
     if (!roomId || !chatId || !userId) return;
 
     // Update messages in DB
@@ -651,7 +734,7 @@ export class ChatGateway {
       },
     });
 
-    // Notify stranger (and room) that messages were seen
+    // Notify stranger / friend room that messages were seen
     this.server.to(roomId).emit('message_seen', {
       chatId,
       messageIds: data?.messageIds || [],
@@ -666,12 +749,27 @@ export class ChatGateway {
   @SubscribeMessage('add_reaction')
   async addReaction(
     @ConnectedSocket() socket: Socket,
-    @MessageBody() data: { messageId: string; emoji: string },
+    @MessageBody() data: { messageId: string; emoji: string; roomId?: string },
   ) {
-    const { roomId, userId } = await this.getSocketContext(socket);
-    if (!roomId || !userId || !data?.messageId || !data?.emoji) return;
+    let { roomId: contextRoomId, userId } = await this.getSocketContext(socket);
+    if (!userId) {
+      userId = (await this.getUserId(socket)) || undefined;
+    }
+    if (!userId || !data?.messageId || !data?.emoji) return;
 
     try {
+      const message = await this.prisma.message.findUnique({
+        where: { id: data.messageId },
+        include: { chat: { include: { friendship: true } } },
+      });
+      if (!message) return;
+
+      const friendRoomId = `friend-${[message.chat.userAId, message.chat.userBId].sort().join('-')}`;
+      const roomId =
+        data?.roomId ||
+        contextRoomId ||
+        (message.chat.friendship ? friendRoomId : message.chatId);
+
       await this.prisma.reaction.upsert({
         where: {
           messageId_userId_emoji: {
@@ -693,10 +791,18 @@ export class ChatGateway {
         select: { emoji: true, userId: true },
       });
 
-      this.server.to(roomId).emit('reaction_updated', {
-        messageId: data.messageId,
-        reactions: updatedReactions,
-      });
+      if (roomId) {
+        this.server.to(roomId).emit('reaction_updated', {
+          messageId: data.messageId,
+          reactions: updatedReactions,
+        });
+      }
+      if (message.chat.friendship && roomId !== friendRoomId) {
+        this.server.to(friendRoomId).emit('reaction_updated', {
+          messageId: data.messageId,
+          reactions: updatedReactions,
+        });
+      }
     } catch (err) {
       console.error('Reaction error:', err);
     }
@@ -705,12 +811,27 @@ export class ChatGateway {
   @SubscribeMessage('remove_reaction')
   async removeReaction(
     @ConnectedSocket() socket: Socket,
-    @MessageBody() data: { messageId: string; emoji: string },
+    @MessageBody() data: { messageId: string; emoji: string; roomId?: string },
   ) {
-    const { roomId, userId } = await this.getSocketContext(socket);
-    if (!roomId || !userId || !data?.messageId || !data?.emoji) return;
+    let { roomId: contextRoomId, userId } = await this.getSocketContext(socket);
+    if (!userId) {
+      userId = (await this.getUserId(socket)) || undefined;
+    }
+    if (!userId || !data?.messageId || !data?.emoji) return;
 
     try {
+      const message = await this.prisma.message.findUnique({
+        where: { id: data.messageId },
+        include: { chat: { include: { friendship: true } } },
+      });
+      if (!message) return;
+
+      const friendRoomId = `friend-${[message.chat.userAId, message.chat.userBId].sort().join('-')}`;
+      const roomId =
+        data?.roomId ||
+        contextRoomId ||
+        (message.chat.friendship ? friendRoomId : message.chatId);
+
       await this.prisma.reaction.deleteMany({
         where: {
           messageId: data.messageId,
@@ -724,10 +845,18 @@ export class ChatGateway {
         select: { emoji: true, userId: true },
       });
 
-      this.server.to(roomId).emit('reaction_updated', {
-        messageId: data.messageId,
-        reactions: updatedReactions,
-      });
+      if (roomId) {
+        this.server.to(roomId).emit('reaction_updated', {
+          messageId: data.messageId,
+          reactions: updatedReactions,
+        });
+      }
+      if (message.chat.friendship && roomId !== friendRoomId) {
+        this.server.to(friendRoomId).emit('reaction_updated', {
+          messageId: data.messageId,
+          reactions: updatedReactions,
+        });
+      }
     } catch (err) {
       console.error('Remove reaction error:', err);
     }
@@ -736,26 +865,43 @@ export class ChatGateway {
   @SubscribeMessage('delete_message')
   async deleteMessage(
     @ConnectedSocket() socket: Socket,
-    @MessageBody() data: { messageId: string },
+    @MessageBody() data: { messageId: string; roomId?: string },
   ) {
-    const { roomId, userId } = await this.getSocketContext(socket);
-    if (!roomId || !userId || !data?.messageId) return;
+    let { roomId: contextRoomId, userId } = await this.getSocketContext(socket);
+    if (!userId) {
+      userId = (await this.getUserId(socket)) || undefined;
+    }
+    if (!userId || !data?.messageId) return;
 
     const message = await this.prisma.message.findUnique({
       where: { id: data.messageId },
+      include: { chat: { include: { friendship: true } } },
     });
 
     // Only sender can delete own message
     if (!message || message.senderId !== userId) return;
+
+    const friendRoomId = `friend-${[message.chat.userAId, message.chat.userBId].sort().join('-')}`;
+    const roomId =
+      data?.roomId ||
+      contextRoomId ||
+      (message.chat.friendship ? friendRoomId : message.chatId);
 
     await this.prisma.message.update({
       where: { id: data.messageId },
       data: { deletedAt: new Date() },
     });
 
-    this.server.to(roomId).emit('message_deleted', {
-      messageId: data.messageId,
-    });
+    if (roomId) {
+      this.server.to(roomId).emit('message_deleted', {
+        messageId: data.messageId,
+      });
+    }
+    if (message.chat.friendship && roomId !== friendRoomId) {
+      this.server.to(friendRoomId).emit('message_deleted', {
+        messageId: data.messageId,
+      });
+    }
   }
 
   // ==========================================
@@ -890,10 +1036,20 @@ export class ChatGateway {
       });
     }
 
+    if (!friendship.chatId || friendship.chatId !== chat.id) {
+      try {
+        await this.prisma.friendship.update({
+          where: { id: friendship.id },
+          data: { chatId: chat.id },
+        });
+      } catch {}
+    }
+
     const messages = await this.getFormattedMessages(chat.id, userId);
 
     socket.emit('friend_room_opened', {
       roomId,
+      chatId: chat.id,
       friendId,
       messages,
     });
@@ -921,7 +1077,21 @@ export class ChatGateway {
     const { roomId, senderId, text, replyToId } = data;
     if (!roomId || !senderId || !text?.trim()) return;
 
-    const { chatId } = await this.getSocketContext(socket);
+    let { chatId } = await this.getSocketContext(socket);
+    if (!chatId && roomId.startsWith('friend-')) {
+      const parts = roomId.replace('friend-', '').split('-');
+      if (parts.length === 2) {
+        const chat = await this.prisma.chat.findFirst({
+          where: {
+            OR: [
+              { userAId: parts[0], userBId: parts[1] },
+              { userAId: parts[1], userBId: parts[0] },
+            ],
+          },
+        });
+        if (chat) chatId = chat.id;
+      }
+    }
     if (!chatId) return;
 
     const message = await this.prisma.message.create({
@@ -953,6 +1123,31 @@ export class ChatGateway {
           }
         : null,
     });
+
+    // Create in-app notification for the friend
+    try {
+      const chat = await this.prisma.chat.findUnique({
+        where: { id: chatId },
+        select: { userAId: true, userBId: true },
+      });
+      if (chat) {
+        const receiverId = chat.userAId === senderId ? chat.userBId : chat.userAId;
+        const senderUser = await this.prisma.user.findUnique({
+          where: { id: senderId },
+          select: { username: true },
+        });
+        const senderName = senderUser?.username || 'A friend';
+        await this.notifications.createNotification({
+          userId: receiverId,
+          type: 'NEW_MESSAGE',
+          title: `New message from ${senderName}`,
+          body: text.length > 60 ? `${text.substring(0, 60)}...` : text,
+          data: { friendId: senderId, chatId, roomId },
+        });
+      }
+    } catch (e) {
+      console.warn('Could not create message notification:', e);
+    }
   }
 
   @SubscribeMessage('send_friend_voice_message')
@@ -963,7 +1158,24 @@ export class ChatGateway {
     const { roomId, audioData, replyToId } = data;
     if (!roomId || !audioData) return;
 
-    const { userId: senderId, chatId } = await this.getSocketContext(socket);
+    let { userId: senderId, chatId } = await this.getSocketContext(socket);
+    if (!senderId) {
+      senderId = (await this.getUserId(socket)) || undefined;
+    }
+    if (!chatId && roomId.startsWith('friend-')) {
+      const parts = roomId.replace('friend-', '').split('-');
+      if (parts.length === 2) {
+        const chat = await this.prisma.chat.findFirst({
+          where: {
+            OR: [
+              { userAId: parts[0], userBId: parts[1] },
+              { userAId: parts[1], userBId: parts[0] },
+            ],
+          },
+        });
+        if (chat) chatId = chat.id;
+      }
+    }
     if (!senderId || !chatId) return;
 
     const content = `audio:${audioData}`;
@@ -989,7 +1201,24 @@ export class ChatGateway {
     const { roomId, imageData, text, replyToId } = data;
     if (!roomId || !imageData) return;
 
-    const { userId: senderId, chatId } = await this.getSocketContext(socket);
+    let { userId: senderId, chatId } = await this.getSocketContext(socket);
+    if (!senderId) {
+      senderId = (await this.getUserId(socket)) || undefined;
+    }
+    if (!chatId && roomId.startsWith('friend-')) {
+      const parts = roomId.replace('friend-', '').split('-');
+      if (parts.length === 2) {
+        const chat = await this.prisma.chat.findFirst({
+          where: {
+            OR: [
+              { userAId: parts[0], userBId: parts[1] },
+              { userAId: parts[1], userBId: parts[0] },
+            ],
+          },
+        });
+        if (chat) chatId = chat.id;
+      }
+    }
     if (!senderId || !chatId) return;
 
     const content = `image:${imageData}`;
@@ -1148,20 +1377,24 @@ export class ChatGateway {
     roomId?: string;
     chatId?: string;
   }> {
+    let userId = this.inMemorySocketUsers.get(socket.id);
+    let roomId = this.inMemoryUserRooms.get(socket.id);
+    let chatId = this.inMemorySocketChats.get(socket.id);
+
     if (this.redis.getIsConnected()) {
       const mapping = await this.redis.getSocketMapping(socket.id);
-      return {
-        userId: mapping?.userId || this.inMemorySocketUsers.get(socket.id),
-        roomId: mapping?.roomId || this.inMemoryUserRooms.get(socket.id),
-        chatId: mapping?.chatId || this.inMemorySocketChats.get(socket.id),
-      };
+      if (mapping) {
+        userId = mapping.userId || userId;
+        roomId = mapping.roomId || roomId;
+        chatId = mapping.chatId || chatId;
+      }
     }
 
-    return {
-      userId: this.inMemorySocketUsers.get(socket.id),
-      roomId: this.inMemoryUserRooms.get(socket.id),
-      chatId: this.inMemorySocketChats.get(socket.id),
-    };
+    if (!userId) {
+      userId = (socket.handshake.auth?.userId as string) || (socket.handshake.query?.userId as string);
+    }
+
+    return { userId, roomId, chatId };
   }
 
   private async getUserId(socket: Socket): Promise<string | null> {

@@ -83,6 +83,12 @@ model User {
 
   friendshipsAsUserA Friendship[] @relation("FriendshipUserA")
   friendshipsAsUserB Friendship[] @relation("FriendshipUserB")
+
+  // ==========================================
+  // NOTIFICATIONS
+  // ==========================================
+
+  notifications Notification[]
 }
 
 model Chat {
@@ -222,4 +228,20 @@ model Friendship {
   @@unique([userAId, userBId])
   @@index([userAId])
   @@index([userBId])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  type      String   // FRIEND_REQUEST, FRIEND_ACCEPTED, NEW_MESSAGE
+  title     String
+  body      String
+  data      String?  // JSON string e.g. { senderId, friendId, etc. }
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
 }

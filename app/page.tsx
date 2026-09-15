@@ -9,6 +9,10 @@ import MessageList, { Message } from "@/components/MessageList";
 import ProfileSetup from "@/components/ProfileSetup";
 import UserProfileModal from "@/components/UserProfileModal";
 import ReportModal from "@/components/ReportModal";
+import AppHeader from "@/components/AppHeader";
+import AppSidebar, { SidebarTab } from "@/components/AppSidebar";
+import EditProfileModal, { UserProfile } from "@/components/EditProfileModal";
+import { AppNotification } from "@/components/NotificationDropdown";
 
 // ==========================================
 // NAVIGATION & VIEW TYPES
@@ -88,20 +92,6 @@ type FriendRoomOpenedData = {
   messages: FriendRoomMessage[];
 };
 
-// ==========================================
-// USER PROFILE TYPE
-// ==========================================
-
-type UserProfile = {
-  id: string;
-  username: string | null;
-  age: number | null;
-  gender: string | null;
-  avatar: string | null;
-  language: string | null;
-  interests: string[];
-  goal: string | null;
-};
 
 export default function Home() {
   // ==========================================
@@ -114,6 +104,15 @@ export default function Home() {
 
   const [currentView, setCurrentView] = useState<AppView>("profile-setup");
   const [profileCompleted, setProfileCompleted] = useState(false);
+  const [checkingProfile, setCheckingProfile] = useState(true);
+
+  // Global user profile state (single source of truth)
+  const [currentUserProfile, setCurrentUserProfile] = useState<UserProfile | null>(null);
+
+  // Layout states: Sidebar & Edit Profile Modal
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   // Match preferences
   const [language, setLanguage] = useState("English");
@@ -167,10 +166,27 @@ export default function Home() {
 
   const [selectedFriend, setSelectedFriend] = useState<Friend | null>(null);
   const [friendRoomId, setFriendRoomId] = useState<string | null>(null);
+  const [friendChatId, setFriendChatId] = useState<string | null>(null);
   const [friendMessages, setFriendMessages] = useState<Message[]>([]);
   const [friendMessage, setFriendMessage] = useState("");
   const [friendChatLoading, setFriendChatLoading] = useState(false);
   const [friendReplyingTo, setFriendReplyingTo] = useState<Message | null>(null);
+
+  // In-App Notifications state
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0);
+
+  const selectedFriendRef = useRef<Friend | null>(null);
+  selectedFriendRef.current = selectedFriend;
+
+  const currentViewRef = useRef<AppView>(currentView);
+  currentViewRef.current = currentView;
+
+  const friendRoomIdRef = useRef<string | null>(null);
+  friendRoomIdRef.current = friendRoomId;
+
+  const friendChatIdRef = useRef<string | null>(null);
+  friendChatIdRef.current = friendChatId;
 
   // ==========================================
   // NOTIFICATION BANNER
@@ -267,21 +283,47 @@ export default function Home() {
       }
       newSocket.emit("friend_online", { userId: data.userId });
 
+      // Load persistent notifications for user
+      try {
+        const [resNotifs, resCount] = await Promise.all([
+          fetch(`http://localhost:3001/notifications/${data.userId}`),
+          fetch(`http://localhost:3001/notifications/${data.userId}/unread-count`),
+        ]);
+        if (resNotifs.ok) {
+          const notifs = await resNotifs.json();
+          setNotifications(notifs);
+        }
+        if (resCount.ok) {
+          const countData = await resCount.json();
+          setUnreadNotificationsCount(countData.count || 0);
+        }
+      } catch (err) {
+        console.warn("Could not initial load notifications:", err);
+      }
+
       // Check if user already has a completed profile in DB
       try {
         const res = await fetch(`http://localhost:3001/users/${data.userId}/profile`);
         if (res.ok) {
           const profile = await res.json();
           if (profile && profile.username) {
+            setCurrentUserProfile(profile);
             setProfileCompleted(true);
             setCurrentView("matching");
             if (profile.language) setLanguage(profile.language);
             if (profile.interests && Array.isArray(profile.interests)) setInterests(profile.interests);
             if (profile.goal) setGoal(profile.goal);
+          } else {
+            setProfileCompleted(false);
           }
+        } else {
+          setProfileCompleted(false);
         }
       } catch (e) {
         console.warn("Could not check existing profile:", e);
+        setProfileCompleted(false);
+      } finally {
+        setCheckingProfile(false);
       }
     });
 
@@ -441,7 +483,24 @@ export default function Home() {
     );
 
     newSocket.on("message_seen", (data: { chatId: string; messageIds?: string[] }) => {
+      // Update stranger chat messages
       setMessages((prev) =>
+        prev.map((msg) => {
+          if (msg.sender === "me") {
+            if (
+              !data.messageIds ||
+              data.messageIds.length === 0 ||
+              (msg.id && data.messageIds.includes(msg.id))
+            ) {
+              return { ...msg, status: "seen" };
+            }
+          }
+          return msg;
+        })
+      );
+
+      // Update friend chat messages
+      setFriendMessages((prev) =>
         prev.map((msg) => {
           if (msg.sender === "me") {
             if (
@@ -469,6 +528,14 @@ export default function Home() {
             : msg
         )
       );
+
+      setFriendMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === data.messageId
+            ? { ...msg, reactions: data.reactions }
+            : msg
+        )
+      );
     });
 
     newSocket.on("message_deleted", (data: { messageId: string }) => {
@@ -479,6 +546,53 @@ export default function Home() {
             : msg
         )
       );
+
+      setFriendMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === data.messageId
+            ? { ...msg, deletedAt: new Date().toISOString() }
+            : msg
+        )
+      );
+    });
+
+    // ==========================================
+    // IN-APP NOTIFICATIONS REAL-TIME
+    // ==========================================
+
+    newSocket.on("new_notification", (notif: any) => {
+      setNotifications((prev) => [
+        {
+          id: notif.id || `temp-${Date.now()}`,
+          type: notif.type,
+          title: notif.title,
+          body: notif.body,
+          data: typeof notif.data === "object" ? JSON.stringify(notif.data) : notif.data,
+          isRead: false,
+          createdAt: notif.createdAt || new Date().toISOString(),
+        },
+        ...prev,
+      ]);
+      setUnreadNotificationsCount((prev) => prev + 1);
+      showNotification(`🔔 ${notif.title}: ${notif.body}`);
+
+      if (userIdRef.current) {
+        if (notif.type === "FRIEND_REQUEST") {
+          fetch(`http://localhost:3001/friends/requests/${userIdRef.current}`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((data) => {
+              if (data) setFriendRequests(data);
+            })
+            .catch(() => {});
+        } else if (notif.type === "FRIEND_ACCEPTED") {
+          fetch(`http://localhost:3001/friends/${userIdRef.current}`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((data) => {
+              if (data) setFriends(data);
+            })
+            .catch(() => {});
+        }
+      }
     });
 
     // ==========================================
@@ -499,6 +613,9 @@ export default function Home() {
 
     newSocket.on("friend_room_opened", (data: any) => {
       setFriendRoomId(data.roomId);
+      if (data.chatId) {
+        setFriendChatId(data.chatId);
+      }
       const currentUserId = userIdRef.current;
 
       const history: Message[] = (data.messages || []).map((item: any) => {
@@ -546,6 +663,18 @@ export default function Home() {
       setFriendMessages(history);
       setFriendChatLoading(false);
       navigateTo("friend-chat");
+
+      // Acknowledge read for any unread friend messages upon opening room
+      const unreadFriendMsgIds = history
+        .filter((m) => m.sender !== "me" && m.id && m.status !== "seen")
+        .map((m) => m.id as string);
+      if (unreadFriendMsgIds.length > 0) {
+        newSocket.emit("mark_seen", {
+          roomId: data.roomId,
+          chatId: data.chatId,
+          messageIds: unreadFriendMsgIds,
+        });
+      }
     });
 
     newSocket.on("receive_friend_message", (data: {
@@ -582,6 +711,18 @@ export default function Home() {
       };
 
       setFriendMessages((prev) => [...prev, newMsg]);
+
+      // Acknowledge seen if recipient is currently active in this friend chat
+      if (
+        currentViewRef.current === "friend-chat" &&
+        selectedFriendRef.current?.id === data.senderId
+      ) {
+        newSocket.emit("mark_seen", {
+          roomId: friendRoomIdRef.current,
+          chatId: friendChatIdRef.current,
+          messageIds: [data.id],
+        });
+      }
     });
 
     newSocket.on("friend_room_error", (data: { message: string }) => {
@@ -824,10 +965,48 @@ export default function Home() {
     }
   };
 
+  const handleToggleFriendReaction = (messageId: string, emoji: string) => {
+    if (!socket || !userId) return;
+
+    const targetMsg = friendMessages.find((m) => m.id === messageId);
+    const existing = targetMsg?.reactions?.find(
+      (r) => r.userId === userId && r.emoji === emoji
+    );
+
+    if (existing) {
+      socket.emit("remove_reaction", {
+        messageId,
+        emoji,
+        roomId: friendRoomIdRef.current,
+      });
+    } else {
+      socket.emit("add_reaction", {
+        messageId,
+        emoji,
+        roomId: friendRoomIdRef.current,
+      });
+    }
+  };
+
   const handleDeleteMessage = (messageId: string) => {
     if (!socket) return;
     socket.emit("delete_message", { messageId });
     setMessages((prev) =>
+      prev.map((msg) =>
+        msg.id === messageId
+          ? { ...msg, deletedAt: new Date().toISOString() }
+          : msg
+      )
+    );
+  };
+
+  const handleDeleteFriendMessage = (messageId: string) => {
+    if (!socket) return;
+    socket.emit("delete_message", {
+      messageId,
+      roomId: friendRoomIdRef.current,
+    });
+    setFriendMessages((prev) =>
       prev.map((msg) =>
         msg.id === messageId
           ? { ...msg, deletedAt: new Date().toISOString() }
@@ -890,6 +1069,88 @@ export default function Home() {
       setFriendRequests(data);
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const loadNotifications = async () => {
+    if (!userId) return;
+    try {
+      const [resNotifs, resCount] = await Promise.all([
+        fetch(`http://localhost:3001/notifications/${userId}`),
+        fetch(`http://localhost:3001/notifications/${userId}/unread-count`),
+      ]);
+      if (resNotifs.ok) {
+        const data = await resNotifs.json();
+        setNotifications(data);
+      }
+      if (resCount.ok) {
+        const countData = await resCount.json();
+        setUnreadNotificationsCount(countData.count || 0);
+      }
+    } catch (err) {
+      console.warn("Could not load notifications:", err);
+    }
+  };
+
+  const markNotificationAsRead = async (id: string) => {
+    if (!userId) return;
+    try {
+      await fetch(`http://localhost:3001/notifications/${id}/read`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId }),
+      });
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === id ? { ...n, isRead: true } : n))
+      );
+      setUnreadNotificationsCount((prev) => Math.max(0, prev - 1));
+    } catch (err) {
+      console.warn("Could not mark notification as read:", err);
+    }
+  };
+
+  const markAllNotificationsAsRead = async () => {
+    if (!userId) return;
+    try {
+      await fetch(`http://localhost:3001/notifications/user/${userId}/read-all`, {
+        method: "PUT",
+      });
+      setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
+      setUnreadNotificationsCount(0);
+    } catch (err) {
+      console.warn("Could not mark all notifications read:", err);
+    }
+  };
+
+  const handleSelectNotification = async (notif: AppNotification) => {
+    if (notif.type === "FRIEND_REQUEST") {
+      openFriends();
+    } else if (notif.type === "FRIEND_ACCEPTED" || notif.type === "NEW_MESSAGE") {
+      try {
+        let parsedData: any = {};
+        if (notif.data) {
+          parsedData = typeof notif.data === "string" ? JSON.parse(notif.data) : notif.data;
+        }
+        const friendId = parsedData.friendId || parsedData.senderId;
+        if (friendId) {
+          // Open friend chat directly
+          if (!friends.length) {
+            await loadFriends();
+          }
+          const targetFriendship = friends.find(
+            (f) => f.friend.id === friendId
+          );
+          if (targetFriendship) {
+            openFriendChat(targetFriendship);
+          } else {
+            openFriends();
+          }
+        } else {
+          openFriends();
+        }
+      } catch {
+        openFriends();
+      }
     }
   };
 
@@ -1045,14 +1306,19 @@ export default function Home() {
   // RENDER: LOADING CONNECTION
   // ==========================================
 
-  if (!userId) {
+  if (!userId || checkingProfile) {
     return (
       <main className="min-h-screen bg-zinc-950 flex items-center justify-center p-4">
-        <div className="w-full max-w-md bg-white rounded-2xl p-8 shadow-xl text-center">
-          <h1 className="text-2xl font-bold text-zinc-900">Stranger Chat</h1>
-          <p className="mt-3 text-zinc-500">Connecting to server...</p>
+        <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl p-8 shadow-2xl text-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 mx-auto text-xl font-bold shadow-lg shadow-indigo-600/20">
+            ⚡
+          </div>
+          <h1 className="text-xl font-bold text-white mt-4">
+            Chat<span className="text-indigo-400">Buddy</span>
+          </h1>
+          <p className="mt-2 text-xs text-zinc-400">Loading your profile & connecting...</p>
           <div className="mt-6">
-            <div className="animate-spin h-8 w-8 border-4 border-zinc-300 border-t-zinc-900 rounded-full mx-auto" />
+            <div className="animate-spin h-7 w-7 border-2 border-indigo-500/30 border-t-indigo-500 rounded-full mx-auto" />
           </div>
         </div>
       </main>
@@ -1060,7 +1326,7 @@ export default function Home() {
   }
 
   // ==========================================
-  // RENDER: PROFILE SETUP
+  // RENDER: FIRST-TIME PROFILE SETUP
   // ==========================================
 
   if (!profileCompleted) {
@@ -1068,7 +1334,17 @@ export default function Home() {
       <main className="min-h-screen bg-zinc-950 flex items-center justify-center p-4">
         <ProfileSetup
           userId={userId}
-          onComplete={() => {
+          onComplete={(savedProfile) => {
+            setCurrentUserProfile((prev) => ({
+              id: userId,
+              username: savedProfile.username,
+              age: savedProfile.age,
+              gender: savedProfile.gender,
+              avatar: savedProfile.avatar,
+              language: prev?.language || language,
+              interests: prev?.interests || interests,
+              goal: prev?.goal || goal,
+            }));
             setProfileCompleted(true);
             navigateTo("matching");
           }}
@@ -1082,406 +1358,509 @@ export default function Home() {
   // ==========================================
 
   const notificationBanner = notification && (
-    <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white shadow-2xl flex items-center gap-2 animate-bounce">
+    <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 rounded-2xl bg-zinc-900/95 border border-zinc-700/80 px-4 py-2.5 text-xs font-semibold text-white shadow-2xl flex items-center gap-2 animate-bounce backdrop-blur-md">
       <span>💬</span>
       <span>{notification}</span>
     </div>
   );
 
-  // ==========================================
-  // RENDER: PRIVATE FRIEND CHAT
-  // ==========================================
-
-  if (currentView === "friend-chat") {
-    return (
-      <main className="min-h-screen bg-zinc-950 flex items-center justify-center p-4">
-        {notificationBanner}
-        <div className="w-full max-w-lg h-[650px] bg-white rounded-2xl overflow-hidden flex flex-col shadow-2xl">
-          {/* Header */}
-          <div className="flex items-center gap-3 px-5 py-4 border-b">
-            <button
-              onClick={closeFriendChat}
-              className="px-3 py-2 rounded-lg bg-zinc-100 text-zinc-800 text-sm font-medium hover:bg-zinc-200 transition"
-            >
-              ← Back to Friends
-            </button>
-
-            <div className="flex-1 min-w-0">
-              <h1 className="font-semibold text-zinc-900 truncate">
-                {selectedFriend?.avatar && <span className="mr-2">{selectedFriend.avatar}</span>}
-                {selectedFriend?.username || "Friend"}
-              </h1>
-              <p className="text-xs text-zinc-500">Private 1-to-1 chat</p>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => openUserProfile(selectedFriend?.id || null)}
-              disabled={!selectedFriend?.id}
-              className="px-3 py-2 rounded-lg bg-zinc-100 text-zinc-700 text-sm font-medium hover:bg-zinc-200 disabled:opacity-50"
-            >
-              👤 Profile
-            </button>
-          </div>
-
-          {friendChatLoading ? (
-            <div className="flex-1 flex items-center justify-center">
-              <div className="text-center">
-                <div className="animate-spin h-8 w-8 border-4 border-zinc-300 border-t-zinc-900 rounded-full mx-auto" />
-                <p className="mt-4 text-sm text-zinc-500">Opening private chat...</p>
-              </div>
-            </div>
-          ) : (
-            <>
-              <MessageList
-                messages={friendMessages}
-                onReplyMessage={(msg) => setFriendReplyingTo(msg)}
-              />
-              <MessageInput
-                message={friendMessage}
-                setMessage={setFriendMessage}
-                sendMessage={sendFriendMessage}
-                onVoiceRecorded={sendFriendVoice}
-                onImageSelected={sendFriendImage}
-                replyingTo={friendReplyingTo}
-                onCancelReply={() => setFriendReplyingTo(null)}
-              />
-            </>
-          )}
-        </div>
-
-        <UserProfileModal user={viewProfile} onClose={() => setViewProfile(null)} />
-      </main>
-    );
-  }
+  // Filtered friends for search
+  const filteredFriends = friends.filter((item) =>
+    searchQuery.trim() === ""
+      ? true
+      : (item.friend.username || "Anonymous")
+          .toLowerCase()
+          .includes(searchQuery.toLowerCase().trim())
+  );
 
   // ==========================================
-  // RENDER: FRIENDS PANEL
-  // ==========================================
-
-  if (currentView === "friends") {
-    return (
-      <main className="min-h-screen bg-zinc-950 flex items-center justify-center p-4">
-        {notificationBanner}
-        <div className="w-full max-w-lg bg-white rounded-2xl overflow-hidden shadow-2xl">
-          <div className="flex items-center justify-between px-6 py-5 border-b">
-            <div>
-              <h1 className="text-2xl font-bold text-zinc-900">Friends</h1>
-              <p className="text-sm text-zinc-500 mt-1">Manage your friends and requests</p>
-            </div>
-            <button
-              onClick={() => {
-                setFriendsError("");
-                navigateTo("matching");
-              }}
-              className="px-4 py-2 rounded-lg bg-zinc-900 text-white text-sm font-medium hover:bg-zinc-700 transition"
-            >
-              ← Back
-            </button>
-          </div>
-
-          <div className="p-6 max-h-[500px] overflow-y-auto">
-            {friendsError && (
-              <div className="mb-4 rounded-lg bg-red-50 text-red-600 px-4 py-3 text-sm">
-                {friendsError}
-              </div>
-            )}
-
-            {/* Requests */}
-            <section>
-              <h2 className="text-lg font-semibold text-zinc-900">Friend Requests</h2>
-              <div className="mt-3 space-y-3">
-                {friendRequests.length === 0 ? (
-                  <p className="text-sm text-zinc-500">No pending requests.</p>
-                ) : (
-                  friendRequests.map((request) => (
-                    <div key={request.id} className="border rounded-xl p-4">
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <p className="font-medium text-zinc-900">
-                            {request.sender.avatar && (
-                              <span className="mr-2">{request.sender.avatar}</span>
-                            )}
-                            {request.sender.username || "Anonymous"}
-                          </p>
-                          {request.sender.age && (
-                            <p className="text-xs text-zinc-500">Age: {request.sender.age}</p>
-                          )}
-                        </div>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => acceptFriendRequest(request.id)}
-                            className="px-3 py-1.5 rounded-lg bg-zinc-900 text-white text-xs font-medium hover:bg-zinc-700"
-                          >
-                            Accept
-                          </button>
-                          <button
-                            onClick={() => rejectFriendRequest(request.id)}
-                            className="px-3 py-1.5 rounded-lg bg-zinc-100 text-zinc-700 text-xs hover:bg-zinc-200"
-                          >
-                            Decline
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </section>
-
-            {/* Friend List */}
-            <section className="mt-6">
-              <h2 className="text-lg font-semibold text-zinc-900">Your Friends</h2>
-              <div className="mt-3 space-y-3">
-                {friendsLoading ? (
-                  <p className="text-sm text-zinc-500">Loading friends...</p>
-                ) : friends.length === 0 ? (
-                  <p className="text-sm text-zinc-500">No friends yet. Add strangers during chat!</p>
-                ) : (
-                  friends.map((item) => (
-                    <div key={item.friendshipId} className="border rounded-xl p-4">
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <p className="font-medium text-zinc-900">
-                            {item.friend.avatar && (
-                              <span className="mr-2">{item.friend.avatar}</span>
-                            )}
-                            {item.friend.username || "Anonymous"}
-                          </p>
-                          {item.friend.age && (
-                            <p className="text-xs text-zinc-500">Age: {item.friend.age}</p>
-                          )}
-                        </div>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => openFriendChat(item)}
-                            className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
-                          >
-                            💬 Chat
-                          </button>
-                          <button
-                            onClick={() => removeFriend(item.friend.id)}
-                            className="px-3 py-2 rounded-lg bg-red-50 text-red-600 text-sm hover:bg-red-100"
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </section>
-          </div>
-        </div>
-      </main>
-    );
-  }
-
-  // ==========================================
-  // RENDER: STRANGER CHAT SCREEN
-  // ==========================================
-
-  if (currentView === "stranger-chat") {
-    return (
-      <main className="min-h-screen bg-zinc-950 flex items-center justify-center p-4">
-        {notificationBanner}
-        <div className="w-full max-w-lg h-[680px] bg-white rounded-2xl overflow-hidden flex flex-col shadow-2xl">
-          {/* Enhanced Chat Header with Back, Status, Report, Block */}
-          <ChatHeader
-            onViewProfile={() => openUserProfile(strangerUserId)}
-            onBack={handleExitStrangerChat}
-            onReport={() => setIsReportOpen(true)}
-            onBlock={handleBlockStranger}
-            status={strangerStatus}
-          />
-
-          {/* Compatibility score */}
-          {matchScore !== null && (
-            <div className="text-center py-1.5 bg-zinc-50 text-xs font-semibold text-zinc-600 border-b">
-              Match compatibility:{" "}
-              <span className="text-zinc-900 font-bold">{matchScore.toFixed(0)}%</span>
-            </div>
-          )}
-
-          {/* Add Friend Banner */}
-          <div className="px-4 py-2 border-b bg-zinc-50/50 flex items-center justify-between">
-            {!friendRequestSent ? (
-              <button
-                onClick={sendFriendRequest}
-                disabled={!strangerUserId}
-                className="w-full bg-blue-600 text-white py-1.5 rounded-lg text-xs font-medium hover:bg-blue-700 transition disabled:bg-zinc-300 disabled:cursor-not-allowed"
-              >
-                👥 Add Stranger as Friend
-              </button>
-            ) : (
-              <div className="w-full text-center bg-green-50 text-green-700 py-1.5 rounded-lg text-xs font-semibold">
-                ✓ Friend request sent
-              </div>
-            )}
-          </div>
-
-          {/* Message List with Delivery, Reactions, Replies, Soft-Delete */}
-          <MessageList
-            messages={messages}
-            onToggleReaction={handleToggleReaction}
-            onDeleteMessage={handleDeleteMessage}
-            onReplyMessage={handleReplyMessage}
-          />
-
-          {/* Real-time typing indicator */}
-          {strangerTyping && (
-            <div className="px-6 py-1.5 text-xs text-zinc-400 animate-pulse bg-white flex items-center gap-1.5">
-              <span className="h-1.5 w-1.5 rounded-full bg-zinc-400 animate-ping" />
-              Stranger is typing...
-            </div>
-          )}
-
-          {/* Input bar supporting text, voice, image, replies, debounced typing */}
-          <MessageInput
-            message={message}
-            setMessage={setMessage}
-            sendMessage={sendStrangerMessage}
-            onVoiceRecorded={sendStrangerVoice}
-            onImageSelected={sendStrangerImage}
-            replyingTo={replyingTo}
-            onCancelReply={() => setReplyingTo(null)}
-            onTypingStart={handleTypingStart}
-            onTypingStop={handleTypingStop}
-            disabled={strangerStatus === "disconnected"}
-          />
-
-          {/* Action Footer: Next Stranger & End Chat */}
-          <div className="grid grid-cols-2 border-t divide-x">
-            <button
-              onClick={handleNextStranger}
-              className="py-3 text-sm font-semibold text-blue-600 hover:bg-blue-50 transition"
-            >
-              ⏭️ Next Stranger
-            </button>
-            <button
-              onClick={handleExitStrangerChat}
-              className="py-3 text-sm font-semibold text-red-600 hover:bg-red-50 transition"
-            >
-              ✕ End Chat
-            </button>
-          </div>
-        </div>
-
-        {/* Report Modal */}
-        <ReportModal
-          isOpen={isReportOpen}
-          onClose={() => setIsReportOpen(false)}
-          onSubmit={handleReportSubmit}
-        />
-
-        {/* User Profile Modal */}
-        <UserProfileModal user={viewProfile} onClose={() => setViewProfile(null)} />
-      </main>
-    );
-  }
-
-  // ==========================================
-  // RENDER: MAIN MATCHING SCREEN
+  // RENDER: MAIN APPLICATION (HEADER + SIDEBAR + WORKSPACE)
   // ==========================================
 
   return (
-    <main className="min-h-screen bg-zinc-950 flex items-center justify-center p-4">
+    <div className="min-h-screen h-screen flex flex-col bg-zinc-950 text-zinc-100 overflow-hidden">
       {notificationBanner}
-      <div className="w-full max-w-md bg-white rounded-2xl p-8 shadow-2xl">
-        <h1 className="text-3xl font-extrabold text-zinc-900 text-center tracking-tight">
-          Stranger Chat
-        </h1>
-        <p className="text-zinc-500 mt-2 text-center text-sm">
-          Connect anonymously with people worldwide.
-        </p>
 
-        <button
-          onClick={openFriends}
-          className="mt-6 w-full border border-zinc-300 text-zinc-800 px-6 py-3 rounded-xl font-medium hover:bg-zinc-50 transition flex items-center justify-center gap-2"
-        >
-          <span>👥</span>
-          <span>Friends & Requests</span>
-        </button>
+      {/* TOP APPLICATION HEADER (☰ Hamburger, Brand, New Chat, Profile, Notifications, Online status) */}
+      <AppHeader
+        onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
+        onNewChat={() => {
+          if (currentView === "stranger-chat") {
+            handleNextStranger();
+          } else {
+            navigateTo("matching");
+          }
+        }}
+        onOpenProfile={() => setIsEditProfileOpen(true)}
+        currentUsername={currentUserProfile?.username}
+        currentAvatar={currentUserProfile?.avatar}
+        unreadNotificationsCount={unreadNotificationsCount}
+        notifications={notifications}
+        onMarkNotificationAsRead={markNotificationAsRead}
+        onMarkAllNotificationsAsRead={markAllNotificationsAsRead}
+        onSelectNotification={handleSelectNotification}
+      />
 
-        <div className="mt-6">
-          <label className="block text-sm font-medium text-zinc-700 mb-2">Language</label>
-          <select
-            value={language}
-            onChange={(e) => setLanguage(e.target.value)}
-            className="w-full border border-zinc-300 rounded-xl px-4 py-3 text-sm focus:border-zinc-500 outline-none"
-          >
-            <option>English</option>
-            <option>Hindi</option>
-            <option>Kannada</option>
-            <option>Telugu</option>
-            <option>Tamil</option>
-            <option>Spanish</option>
-          </select>
-        </div>
+      {/* MAIN BODY: SIDEBAR + RIGHT WORKSPACE */}
+      <div className="flex-1 flex overflow-hidden relative">
+        {/* LEFT NAVIGATION SIDEBAR */}
+        <AppSidebar
+          isOpen={isSidebarOpen}
+          onClose={() => setIsSidebarOpen(false)}
+          activeTab={currentView === "friends" || currentView === "friend-chat" ? "friends" : "chat"}
+          onSelectTab={(tab) => {
+            if (tab === "friends") {
+              openFriends();
+            } else {
+              if (currentView !== "stranger-chat") {
+                navigateTo("matching");
+              }
+            }
+          }}
+          userProfile={currentUserProfile}
+          onOpenEditProfile={() => setIsEditProfileOpen(true)}
+          onStartNewChat={() => {
+            setIsSidebarOpen(false);
+            if (currentView === "stranger-chat") {
+              handleNextStranger();
+            } else {
+              navigateTo("matching");
+            }
+          }}
+          friendsCount={friends.length}
+          pendingRequestsCount={friendRequests.length}
+          searchQuery={searchQuery}
+          onSearchQueryChange={setSearchQuery}
+        />
 
-        <div className="mt-5">
-          <label className="block text-sm font-medium text-zinc-700 mb-2">Interests</label>
-          <div className="flex flex-wrap gap-2">
-            {availableInterests.map((interest) => (
-              <button
-                key={interest}
-                type="button"
-                onClick={() => toggleInterest(interest)}
-                className={`px-3.5 py-2 rounded-xl text-xs font-semibold border transition ${
-                  interests.includes(interest)
-                    ? "bg-zinc-900 text-white border-zinc-900"
-                    : "bg-white text-zinc-700 border-zinc-200 hover:bg-zinc-50"
-                }`}
-              >
-                {interest}
-              </button>
-            ))}
-          </div>
-        </div>
+        {/* RIGHT WORKSPACE AREA */}
+        <main className="flex-1 flex flex-col min-w-0 bg-zinc-950 overflow-y-auto relative">
+          {/* VIEW: PRIVATE FRIEND CHAT */}
+          {currentView === "friend-chat" && (
+            <div className="flex-1 flex flex-col items-center justify-center p-2 sm:p-4 h-full">
+              <div className="w-full max-w-2xl h-[94%] bg-white rounded-3xl overflow-hidden flex flex-col shadow-2xl border border-zinc-200/80">
+                {/* Header */}
+                <div className="flex items-center gap-3 px-5 py-3.5 border-b bg-zinc-50/70">
+                  <button
+                    onClick={closeFriendChat}
+                    className="px-3 py-1.5 rounded-xl bg-white border border-zinc-200 text-zinc-800 text-xs font-semibold hover:bg-zinc-100 transition shadow-xs"
+                  >
+                    ← Back to Friends
+                  </button>
 
-        <div className="mt-5">
-          <label className="block text-sm font-medium text-zinc-700 mb-2">
-            What are you looking for?
-          </label>
-          <select
-            value={goal}
-            onChange={(e) => setGoal(e.target.value)}
-            className="w-full border border-zinc-300 rounded-xl px-4 py-3 text-sm focus:border-zinc-500 outline-none"
-          >
-            <option value="casual-chat">Casual Chat</option>
-            <option value="friendship">Friendship</option>
-            <option value="learning">Language & Learning</option>
-            <option value="networking">Networking</option>
-          </select>
-        </div>
+                  <div className="flex-1 min-w-0">
+                    <h1 className="font-bold text-zinc-900 text-sm truncate flex items-center gap-1.5">
+                      {selectedFriend?.avatar && <span>{selectedFriend.avatar}</span>}
+                      <span>{selectedFriend?.username || "Friend"}</span>
+                    </h1>
+                    <p className="text-[11px] text-zinc-500">Private 1-to-1 conversation</p>
+                  </div>
 
-        {!waiting ? (
-          <button
-            onClick={findStranger}
-            className="mt-6 w-full bg-zinc-900 text-white px-6 py-3.5 rounded-xl font-medium hover:bg-zinc-800 transition shadow-lg"
-          >
-            ⚡ Find a Stranger
-          </button>
-        ) : (
-          <div className="mt-6 text-center py-4 bg-zinc-50 rounded-xl border border-zinc-100 animate-pulse">
-            <div className="animate-spin h-6 w-6 border-2 border-zinc-400 border-t-zinc-900 rounded-full mx-auto" />
-            <p className="mt-3 text-zinc-800 font-semibold text-sm">Searching for someone...</p>
-            <p className="mt-1 text-xs text-zinc-400">Finding your best match</p>
-            <button
-              onClick={() => {
-                setWaiting(false);
-                if (socket) socket.emit("end_chat");
-              }}
-              className="mt-3 text-xs text-red-500 hover:underline"
-            >
-              Cancel search
-            </button>
-          </div>
-        )}
+                  <button
+                    type="button"
+                    onClick={() => openUserProfile(selectedFriend?.id || null)}
+                    disabled={!selectedFriend?.id}
+                    className="px-3 py-1.5 rounded-xl bg-zinc-100 text-zinc-700 text-xs font-medium hover:bg-zinc-200 transition disabled:opacity-50"
+                  >
+                    👤 Profile
+                  </button>
+                </div>
+
+                {friendChatLoading ? (
+                  <div className="flex-1 flex items-center justify-center">
+                    <div className="text-center">
+                      <div className="animate-spin h-7 w-7 border-3 border-zinc-300 border-t-zinc-900 rounded-full mx-auto" />
+                      <p className="mt-3 text-xs text-zinc-500">Opening private chat...</p>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <MessageList
+                      messages={friendMessages}
+                      currentUserId={userId}
+                      onToggleReaction={handleToggleFriendReaction}
+                      onDeleteMessage={handleDeleteFriendMessage}
+                      onReplyMessage={(msg) => setFriendReplyingTo(msg)}
+                    />
+                    <MessageInput
+                      message={friendMessage}
+                      setMessage={setFriendMessage}
+                      sendMessage={sendFriendMessage}
+                      onVoiceRecorded={sendFriendVoice}
+                      onImageSelected={sendFriendImage}
+                      replyingTo={friendReplyingTo}
+                      onCancelReply={() => setFriendReplyingTo(null)}
+                    />
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* VIEW: FRIENDS PANEL */}
+          {currentView === "friends" && (
+            <div className="flex-1 flex flex-col items-center justify-center p-3 sm:p-6 overflow-y-auto">
+              <div className="w-full max-w-2xl bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl">
+                <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 bg-zinc-950/50">
+                  <div>
+                    <h1 className="text-lg font-bold text-white">Friends & Connections</h1>
+                    <p className="text-xs text-zinc-400 mt-0.5">Manage your requests and private friends</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setFriendsError("");
+                      navigateTo("matching");
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-zinc-800 text-zinc-200 hover:text-white text-xs font-semibold hover:bg-zinc-700 transition"
+                  >
+                    ← Stranger Chat
+                  </button>
+                </div>
+
+                <div className="p-6 max-h-[550px] overflow-y-auto space-y-6">
+                  {friendsError && (
+                    <div className="rounded-2xl bg-red-950/60 border border-red-800/80 text-red-300 px-4 py-2.5 text-xs">
+                      {friendsError}
+                    </div>
+                  )}
+
+                  {/* Friend Requests */}
+                  <section>
+                    <div className="flex items-center justify-between mb-3">
+                      <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-400">
+                        Pending Friend Requests ({friendRequests.length})
+                      </h2>
+                    </div>
+                    <div className="space-y-2.5">
+                      {friendRequests.length === 0 ? (
+                        <p className="text-xs text-zinc-500 py-2">No pending friend requests.</p>
+                      ) : (
+                        friendRequests.map((request) => (
+                          <div
+                            key={request.id}
+                            className="border border-zinc-800 rounded-2xl p-3 bg-zinc-950/40 flex items-center justify-between gap-3"
+                          >
+                            <div className="flex items-center gap-2.5">
+                              <span className="text-2xl">{request.sender.avatar || "👤"}</span>
+                              <div>
+                                <p className="text-xs font-bold text-white">
+                                  {request.sender.username || "Anonymous"}
+                                </p>
+                                {request.sender.age && (
+                                  <p className="text-[11px] text-zinc-500">Age: {request.sender.age}</p>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => acceptFriendRequest(request.id)}
+                                className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-xs transition"
+                              >
+                                Accept
+                              </button>
+                              <button
+                                onClick={() => rejectFriendRequest(request.id)}
+                                className="px-3 py-1.5 rounded-xl bg-zinc-800 text-zinc-300 hover:text-white text-xs font-medium hover:bg-zinc-700 transition"
+                              >
+                                Decline
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </section>
+
+                  {/* Friend List */}
+                  <section>
+                    <div className="flex items-center justify-between mb-3">
+                      <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-400">
+                        Your Friends ({filteredFriends.length})
+                      </h2>
+                    </div>
+                    <div className="space-y-2.5">
+                      {friendsLoading ? (
+                        <p className="text-xs text-zinc-500 py-2">Loading friends...</p>
+                      ) : filteredFriends.length === 0 ? (
+                        <p className="text-xs text-zinc-500 py-2">
+                          {searchQuery
+                            ? "No friends match your search query."
+                            : "No friends yet. Click 'Add Stranger as Friend' during chat!"}
+                        </p>
+                      ) : (
+                        filteredFriends.map((item) => (
+                          <div
+                            key={item.friendshipId}
+                            className="border border-zinc-800 rounded-2xl p-3 bg-zinc-950/40 flex items-center justify-between gap-3 hover:border-zinc-700 transition"
+                          >
+                            <div className="flex items-center gap-2.5">
+                              <span className="text-2xl">{item.friend.avatar || "👤"}</span>
+                              <div>
+                                <p className="text-xs font-bold text-white">
+                                  {item.friend.username || "Anonymous"}
+                                </p>
+                                {item.friend.age && (
+                                  <p className="text-[11px] text-zinc-500">Age: {item.friend.age}</p>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => openFriendChat(item)}
+                                className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-xs transition flex items-center gap-1"
+                              >
+                                <span>💬</span>
+                                <span>Chat</span>
+                              </button>
+                              <button
+                                onClick={() => removeFriend(item.friend.id)}
+                                className="px-3 py-1.5 rounded-xl bg-zinc-800/80 hover:bg-red-950/60 hover:text-red-400 text-zinc-400 text-xs font-medium border border-zinc-700/40 transition"
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </section>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* VIEW: ACTIVE STRANGER CHAT */}
+          {currentView === "stranger-chat" && (
+            <div className="flex-1 flex flex-col items-center justify-center p-2 sm:p-4 h-full">
+              <div className="w-full max-w-2xl h-[96%] bg-white rounded-3xl overflow-hidden flex flex-col shadow-2xl border border-zinc-200/80">
+                <ChatHeader
+                  onViewProfile={() => openUserProfile(strangerUserId)}
+                  onBack={handleExitStrangerChat}
+                  onSkip={handleNextStranger}
+                  onReport={() => setIsReportOpen(true)}
+                  onBlock={handleBlockStranger}
+                  status={strangerStatus}
+                  onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
+                />
+
+                {/* Compatibility score */}
+                {matchScore !== null && (
+                  <div className="text-center py-1.5 bg-zinc-50 text-xs font-semibold text-zinc-600 border-b border-zinc-100">
+                    Match compatibility:{" "}
+                    <span className="text-zinc-900 font-bold">{matchScore.toFixed(0)}%</span>
+                  </div>
+                )}
+
+                {/* Add Friend Banner */}
+                <div className="px-4 py-2 border-b border-zinc-100 bg-zinc-50/50 flex items-center justify-between">
+                  {!friendRequestSent ? (
+                    <button
+                      onClick={sendFriendRequest}
+                      disabled={!strangerUserId}
+                      className="w-full bg-indigo-600 text-white py-1.5 rounded-xl text-xs font-semibold hover:bg-indigo-700 transition disabled:bg-zinc-300 disabled:cursor-not-allowed shadow-xs"
+                    >
+                      👥 Add Stranger as Friend
+                    </button>
+                  ) : (
+                    <div className="w-full text-center bg-emerald-50 text-emerald-700 py-1.5 rounded-xl text-xs font-semibold">
+                      ✓ Friend request sent
+                    </div>
+                  )}
+                </div>
+
+                {/* Message List with Delivery, Reactions, Replies, Soft-Delete */}
+                <MessageList
+                  messages={messages}
+                  onToggleReaction={handleToggleReaction}
+                  onDeleteMessage={handleDeleteMessage}
+                  onReplyMessage={handleReplyMessage}
+                />
+
+                {/* Real-time typing indicator */}
+                {strangerTyping && (
+                  <div className="px-6 py-1.5 text-xs text-zinc-400 animate-pulse bg-white flex items-center gap-1.5">
+                    <span className="h-1.5 w-1.5 rounded-full bg-zinc-400 animate-ping" />
+                    Stranger is typing...
+                  </div>
+                )}
+
+                {/* Message Input with Voice, Image, Debounced typing */}
+                <MessageInput
+                  message={message}
+                  setMessage={setMessage}
+                  sendMessage={sendStrangerMessage}
+                  onVoiceRecorded={sendStrangerVoice}
+                  onImageSelected={sendStrangerImage}
+                  replyingTo={replyingTo}
+                  onCancelReply={() => setReplyingTo(null)}
+                  onTypingStart={handleTypingStart}
+                  onTypingStop={handleTypingStop}
+                  disabled={strangerStatus === "disconnected"}
+                />
+
+                {/* Action Footer: Next Stranger & End Chat */}
+                <div className="grid grid-cols-2 border-t divide-x divide-zinc-200">
+                  <button
+                    onClick={handleNextStranger}
+                    className="py-3 text-xs sm:text-sm font-semibold text-indigo-600 hover:bg-indigo-50 transition flex items-center justify-center gap-1.5"
+                  >
+                    <span>⏭️</span>
+                    <span>Next Stranger</span>
+                  </button>
+                  <button
+                    onClick={handleExitStrangerChat}
+                    className="py-3 text-xs sm:text-sm font-semibold text-rose-600 hover:bg-rose-50 transition flex items-center justify-center gap-1.5"
+                  >
+                    <span>✕</span>
+                    <span>End Chat</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* VIEW: MAIN MATCHING SETUP SCREEN */}
+          {currentView === "matching" && (
+            <div className="flex-1 flex flex-col items-center justify-center p-4 sm:p-8">
+              <div className="w-full max-w-lg bg-zinc-900 border border-zinc-800 rounded-3xl p-6 sm:p-8 shadow-2xl text-zinc-100">
+                <div className="flex items-center justify-center gap-2 mb-2">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-indigo-600 text-white text-xl font-bold shadow-lg shadow-indigo-600/30">
+                    ⚡
+                  </span>
+                </div>
+                <h1 className="text-2xl sm:text-3xl font-extrabold text-white text-center tracking-tight">
+                  Stranger Chat
+                </h1>
+                <p className="text-zinc-400 mt-1.5 text-center text-xs sm:text-sm">
+                  Connect anonymously with people worldwide matching your interests.
+                </p>
+
+                {/* Friends & Requests shortcut banner */}
+                <button
+                  onClick={openFriends}
+                  className="mt-6 w-full border border-zinc-800 bg-zinc-950/60 hover:bg-zinc-800 text-zinc-200 px-5 py-3 rounded-2xl text-xs font-semibold transition flex items-center justify-between"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span>👥</span>
+                    <span>Friends & Requests</span>
+                  </div>
+                  {friendRequests.length > 0 && (
+                    <span className="px-2 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-bold">
+                      {friendRequests.length} new
+                    </span>
+                  )}
+                </button>
+
+                {/* Language selection */}
+                <div className="mt-5">
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">
+                    Language
+                  </label>
+                  <select
+                    value={language}
+                    onChange={(e) => setLanguage(e.target.value)}
+                    className="w-full border border-zinc-800 bg-zinc-950 rounded-2xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500 transition"
+                  >
+                    <option>English</option>
+                    <option>Hindi</option>
+                    <option>Kannada</option>
+                    <option>Telugu</option>
+                    <option>Tamil</option>
+                    <option>Spanish</option>
+                  </select>
+                </div>
+
+                {/* Interests selection */}
+                <div className="mt-5">
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">
+                    Interests
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {availableInterests.map((interest) => (
+                      <button
+                        key={interest}
+                        type="button"
+                        onClick={() => toggleInterest(interest)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition ${
+                          interests.includes(interest)
+                            ? "bg-indigo-600 text-white border-indigo-500 shadow-sm shadow-indigo-600/30"
+                            : "bg-zinc-950 text-zinc-400 border-zinc-800 hover:border-zinc-700 hover:text-zinc-200"
+                        }`}
+                      >
+                        #{interest}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Match Goal */}
+                <div className="mt-5">
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">
+                    What are you looking for?
+                  </label>
+                  <select
+                    value={goal}
+                    onChange={(e) => setGoal(e.target.value)}
+                    className="w-full border border-zinc-800 bg-zinc-950 rounded-2xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500 transition"
+                  >
+                    <option value="casual-chat">Casual Chat</option>
+                    <option value="friendship">Friendship</option>
+                    <option value="learning">Language & Learning</option>
+                    <option value="networking">Networking</option>
+                  </select>
+                </div>
+
+                {/* Action button */}
+                {!waiting ? (
+                  <button
+                    onClick={findStranger}
+                    className="mt-6 w-full bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white px-6 py-3.5 rounded-2xl font-bold text-sm transition shadow-lg shadow-indigo-600/30 active:scale-98 flex items-center justify-center gap-2"
+                  >
+                    <span>⚡</span>
+                    <span>Find a Stranger</span>
+                  </button>
+                ) : (
+                  <div className="mt-6 text-center py-5 bg-zinc-950/70 rounded-2xl border border-zinc-800 animate-pulse">
+                    <div className="animate-spin h-6 w-6 border-2 border-indigo-400/40 border-t-indigo-500 rounded-full mx-auto" />
+                    <p className="mt-3 text-white font-bold text-xs">Searching for someone...</p>
+                    <p className="mt-1 text-[11px] text-zinc-400">Finding best match by interests</p>
+                    <button
+                      onClick={() => {
+                        setWaiting(false);
+                        if (socket) socket.emit("end_chat");
+                      }}
+                      className="mt-3 text-xs text-rose-400 hover:underline"
+                    >
+                      Cancel search
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </main>
       </div>
 
+      {/* Edit Profile Modal */}
+      <EditProfileModal
+        isOpen={isEditProfileOpen}
+        user={currentUserProfile}
+        onClose={() => setIsEditProfileOpen(false)}
+        onSave={(updatedProfile) => {
+          setCurrentUserProfile(updatedProfile);
+          showNotification("Profile updated successfully!");
+        }}
+      />
+
+      {/* Report Modal */}
+      <ReportModal
+        isOpen={isReportOpen}
+        onClose={() => setIsReportOpen(false)}
+        onSubmit={handleReportSubmit}
+      />
+
+      {/* User Profile Viewing Modal */}
       <UserProfileModal user={viewProfile} onClose={() => setViewProfile(null)} />
-    </main>
+    </div>
   );
 }

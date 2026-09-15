@@ -1,0 +1,255 @@
+"use client";
+
+import { useState } from "react";
+
+export type UserProfile = {
+  id: string;
+  username: string | null;
+  age: number | null;
+  gender: string | null;
+  avatar: string | null;
+  language: string | null;
+  interests: string[];
+  goal: string | null;
+};
+
+type EditProfileModalProps = {
+  isOpen: boolean;
+  user: UserProfile | null;
+  onClose: () => void;
+  onSave: (updatedProfile: UserProfile) => void;
+};
+
+const avatars = ["🐶", "🐱", "🦊", "🐸", "🐼", "🐨", "🦁", "🐯", "🐰", "🦄"];
+
+export default function EditProfileModal({
+  isOpen,
+  user,
+  onClose,
+  onSave,
+}: EditProfileModalProps) {
+  if (!isOpen || !user) return null;
+
+  const [username, setUsername] = useState(user.username || "");
+  const [age, setAge] = useState(user.age ? String(user.age) : "");
+  const [gender, setGender] = useState(user.gender || "prefer-not-to-say");
+  const [avatar, setAvatar] = useState(user.avatar || "🐶");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    setSuccess(false);
+
+    const trimmedUsername = username.trim();
+    if (!trimmedUsername) {
+      setError("Please enter a username.");
+      return;
+    }
+    if (trimmedUsername.length < 3) {
+      setError("Username must be at least 3 characters.");
+      return;
+    }
+
+    const numericAge = Number(age);
+    if (!numericAge || numericAge < 13 || numericAge > 100) {
+      setError("Please enter a valid age between 13 and 100.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const response = await fetch(
+        `http://localhost:3001/users/${user.id}/profile`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            username: trimmedUsername,
+            age: numericAge,
+            gender,
+            avatar,
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        if (
+          response.status === 409 ||
+          data.message?.toString().toLowerCase().includes("username")
+        ) {
+          setError("That username is already taken. Please choose another.");
+        } else {
+          setError(data.message || "Failed to update profile.");
+        }
+        return;
+      }
+
+      setSuccess(true);
+      onSave({
+        ...user,
+        username: data.username,
+        age: data.age,
+        gender: data.gender,
+        avatar: data.avatar,
+      });
+
+      setTimeout(() => {
+        onClose();
+      }, 700);
+    } catch (err) {
+      console.error("Profile edit error:", err);
+      setError("Could not connect to backend server.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fadeIn"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl text-zinc-100 overflow-hidden relative"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between pb-4 border-b border-zinc-800">
+          <div className="flex items-center gap-2">
+            <span className="text-xl">⚙️</span>
+            <h2 className="text-lg font-bold text-white tracking-tight">
+              Edit Your Profile
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-8 w-8 rounded-full bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white flex items-center justify-center transition"
+          >
+            ✕
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="mt-5 space-y-4">
+          {/* Avatar Selection */}
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">
+              Choose Avatar
+            </label>
+            <div className="flex flex-wrap gap-2 justify-center py-2 bg-zinc-950/60 rounded-2xl border border-zinc-800/80 p-2">
+              {avatars.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => setAvatar(item)}
+                  className={`w-11 h-11 rounded-2xl text-2xl flex items-center justify-center transition ${
+                    avatar === item
+                      ? "bg-zinc-800 border-2 border-indigo-500 scale-105 shadow-md shadow-indigo-500/20"
+                      : "bg-zinc-900/80 border border-zinc-800 hover:border-zinc-600 opacity-75 hover:opacity-100"
+                  }`}
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Username */}
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">
+              Username
+            </label>
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="e.g. Alex_Code"
+              maxLength={20}
+              className="w-full rounded-xl bg-zinc-950 border border-zinc-800 px-4 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500 transition placeholder-zinc-600"
+            />
+          </div>
+
+          {/* Age & Gender Grid */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">
+                Age
+              </label>
+              <input
+                type="number"
+                min={13}
+                max={100}
+                value={age}
+                onChange={(e) => setAge(e.target.value)}
+                placeholder="18"
+                className="w-full rounded-xl bg-zinc-950 border border-zinc-800 px-4 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500 transition placeholder-zinc-600"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">
+                Gender
+              </label>
+              <select
+                value={gender}
+                onChange={(e) => setGender(e.target.value)}
+                className="w-full rounded-xl bg-zinc-950 border border-zinc-800 px-3 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500 transition"
+              >
+                <option value="male">Male</option>
+                <option value="female">Female</option>
+                <option value="non-binary">Non-binary</option>
+                <option value="prefer-not-to-say">Prefer not to say</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Feedback messages */}
+          {error && (
+            <div className="p-3 rounded-xl bg-red-950/60 border border-red-800/80 text-xs text-red-300 flex items-center gap-2">
+              <span>⚠️</span>
+              <span>{error}</span>
+            </div>
+          )}
+
+          {success && (
+            <div className="p-3 rounded-xl bg-emerald-950/60 border border-emerald-800/80 text-xs text-emerald-300 flex items-center gap-2">
+              <span>✓</span>
+              <span>Profile updated successfully!</span>
+            </div>
+          )}
+
+          {/* Buttons */}
+          <div className="pt-2 flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={saving}
+              className="px-4 py-2.5 rounded-xl text-xs font-medium text-zinc-400 hover:text-white hover:bg-zinc-800 transition"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition active:scale-95 disabled:opacity-50 flex items-center gap-1.5 shadow-lg shadow-indigo-600/30"
+            >
+              {saving ? (
+                <>
+                  <span className="h-3 w-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                  <span>Saving...</span>
+                </>
+              ) : (
+                <span>Save Changes</span>
+              )}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}

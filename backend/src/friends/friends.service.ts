@@ -5,10 +5,14 @@ import {
 } from '@nestjs/common';
 
 import { PrismaService } from '../prisma.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 
 @Injectable()
 export class FriendsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   // ==========================================
   // SEND FRIEND REQUEST
@@ -100,6 +104,21 @@ export class FriendsService {
         senderId,
         receiverId,
       },
+      include: {
+        sender: {
+          select: { username: true, avatar: true },
+        },
+      },
+    });
+
+    // Create persistent in-app notification for receiver
+    const senderName = request.sender?.username || 'A user';
+    await this.notifications.createNotification({
+      userId: receiverId,
+      type: 'FRIEND_REQUEST',
+      title: 'New Friend Request',
+      body: `${senderName} sent you a friend request.`,
+      data: { senderId, requestId: request.id },
     });
 
     return {
@@ -244,6 +263,20 @@ export class FriendsService {
         friendship,
         chat,
       };
+    });
+
+    // Notify sender that their request was accepted
+    const receiver = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { username: true },
+    });
+    const receiverName = receiver?.username || 'Your friend';
+    await this.notifications.createNotification({
+      userId: request.senderId,
+      type: 'FRIEND_ACCEPTED',
+      title: 'Friend Request Accepted',
+      body: `${receiverName} accepted your friend request!`,
+      data: { friendId: userId, chatId: result.chat.id },
     });
 
     return {

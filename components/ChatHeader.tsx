@@ -9,6 +9,7 @@ type ChatHeaderProps = {
   onReport?: () => void;
   onBlock?: () => void;
   onBack?: () => void;
+  onToggleSidebar?: () => void;
 };
 
 export default function ChatHeader({
@@ -18,6 +19,7 @@ export default function ChatHeader({
   onReport,
   onBlock,
   onBack,
+  onToggleSidebar,
 }: ChatHeaderProps) {
   const [showMenu, setShowMenu] = useState(false);
 
@@ -40,8 +42,18 @@ export default function ChatHeader({
   };
 
   return (
-    <header className="border-b px-4 py-3 flex items-center justify-between bg-white relative">
-      <div className="flex items-center gap-3">
+    <header className="border-b border-zinc-200 px-4 py-3 flex items-center justify-between bg-white relative">
+      <div className="flex items-center gap-2.5">
+        {onToggleSidebar && (
+          <button
+            type="button"
+            onClick={onToggleSidebar}
+            className="h-8 w-8 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-700 flex items-center justify-center text-base font-mono transition"
+            title="Toggle Sidebar"
+          >
+            ☰
+          </button>
+        )}
         {onBack && (
           <button
             type="button"
