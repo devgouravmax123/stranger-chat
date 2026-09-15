@@ -11,6 +11,7 @@ import { UsersModule } from './users/users.module.js';
 import { FriendsModule } from './friends/friends.module.js';
 import { RedisModule } from './redis/redis.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
+import { GeminiModule } from './gemini/gemini.module.js';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { NotificationsModule } from './notifications/notifications.module.js';
     UsersModule,
     FriendsModule,
     NotificationsModule,
+    GeminiModule,
   ],
   controllers: [
     AppController,

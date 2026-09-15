@@ -13,6 +13,7 @@ import AppHeader from "@/components/AppHeader";
 import AppSidebar, { SidebarTab } from "@/components/AppSidebar";
 import EditProfileModal, { UserProfile } from "@/components/EditProfileModal";
 import { AppNotification } from "@/components/NotificationDropdown";
+import AiSuggestions from "@/components/AiSuggestions";
 
 // ==========================================
 // NAVIGATION & VIEW TYPES
@@ -133,6 +134,7 @@ export default function Home() {
   // ==========================================
 
   const [waiting, setWaiting] = useState(false);
+  const [strangerRoomId, setStrangerRoomId] = useState<string | null>(null);
   const [strangerUserId, setStrangerUserId] = useState<string | null>(null);
   const [matchScore, setMatchScore] = useState<number | null>(null);
   const [strangerStatus, setStrangerStatus] = useState<
@@ -340,6 +342,7 @@ export default function Home() {
       setWaiting(false);
       setUserId(data.userId);
       userIdRef.current = data.userId;
+      setStrangerRoomId(data.roomId);
       setStrangerUserId(data.strangerUserId);
       setMatchScore(data.score);
       setStrangerStatus("online");
@@ -787,6 +790,7 @@ export default function Home() {
     setReplyingTo(null);
     setStrangerTyping(false);
     setMatchScore(null);
+    setStrangerRoomId(null);
     setStrangerUserId(null);
     setFriendRequestSent(false);
     setFriendRequestMessage("");
@@ -806,6 +810,7 @@ export default function Home() {
     setReplyingTo(null);
     setStrangerTyping(false);
     setMatchScore(null);
+    setStrangerRoomId(null);
     setStrangerUserId(null);
     setFriendRequestSent(false);
     setFriendRequestMessage("");
@@ -1482,6 +1487,12 @@ export default function Home() {
                       onDeleteMessage={handleDeleteFriendMessage}
                       onReplyMessage={(msg) => setFriendReplyingTo(msg)}
                     />
+                    <AiSuggestions
+                      conversationId={friendRoomId || friendChatId || selectedFriend?.id}
+                      messages={friendMessages}
+                      currentUserId={userId}
+                      onSelectSuggestion={(text) => setFriendMessage(text)}
+                    />
                     <MessageInput
                       message={friendMessage}
                       setMessage={setFriendMessage}
@@ -1683,6 +1694,15 @@ export default function Home() {
                     Stranger is typing...
                   </div>
                 )}
+
+                {/* AI Conversation Suggestions */}
+                <AiSuggestions
+                  conversationId={strangerRoomId || strangerUserId}
+                  messages={messages}
+                  currentUserId={userId || undefined}
+                  onSelectSuggestion={(text) => setMessage(text)}
+                  disabled={strangerStatus === "disconnected"}
+                />
 
                 {/* Message Input with Voice, Image, Debounced typing */}
                 <MessageInput

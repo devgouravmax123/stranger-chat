@@ -55,11 +55,21 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     return this.isConnected;
   }
 
+  private fallbackMemoryMap = new Map<string, { value: string; expiresAt?: number }>();
+
   /**
-   * Basic String Key Operations
+   * Basic String Key Operations with in-memory resilience
    */
   async get(key: string): Promise<string | null> {
-    if (!this.isConnected) return null;
+    if (!this.isConnected) {
+      const item = this.fallbackMemoryMap.get(key);
+      if (!item) return null;
+      if (item.expiresAt && Date.now() > item.expiresAt) {
+        this.fallbackMemoryMap.delete(key);
+        return null;
+      }
+      return item.value;
+    }
     try {
       return await this.client.get(key);
     } catch (err) {
@@ -68,7 +78,13 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   async set(key: string, value: string, ttlSeconds?: number): Promise<void> {
-    if (!this.isConnected) return;
+    if (!this.isConnected) {
+      this.fallbackMemoryMap.set(key, {
+        value,
+        expiresAt: ttlSeconds ? Date.now() + ttlSeconds * 1000 : undefined,
+      });
+      return;
+    }
     try {
       if (ttlSeconds) {
         await this.client.set(key, value, 'EX', ttlSeconds);
@@ -79,14 +95,25 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   async del(key: string): Promise<void> {
-    if (!this.isConnected) return;
+    if (!this.isConnected) {
+      this.fallbackMemoryMap.delete(key);
+      return;
+    }
     try {
       await this.client.del(key);
     } catch (err) {}
   }
 
   async exists(key: string): Promise<boolean> {
-    if (!this.isConnected) return false;
+    if (!this.isConnected) {
+      const item = this.fallbackMemoryMap.get(key);
+      if (!item) return false;
+      if (item.expiresAt && Date.now() > item.expiresAt) {
+        this.fallbackMemoryMap.delete(key);
+        return false;
+      }
+      return true;
+    }
     try {
       const result = await this.client.exists(key);
       return result === 1;
@@ -94,6 +121,72 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       return false;
     }
   }
+
+  async incr(key: string, ttlSeconds?: number): Promise<number> {
+    if (!this.isConnected) {
+      const now = Date.now();
+      const existing = this.fallbackMemoryMap.get(key);
+      let count = 1;
+      let expiresAt: number | undefined = ttlSeconds ? now + ttlSeconds * 1000 : undefined;
+      if (existing) {
+        if (existing.expiresAt && now > existing.expiresAt) {
+          count = 1;
+        } else {
+          count = (parseInt(existing.value, 10) || 0) + 1;
+          expiresAt = existing.expiresAt || expiresAt;
+        }
+      }
+      this.fallbackMemoryMap.set(key, { value: String(count), expiresAt });
+      return count;
+    }
+    try {
+      const current = await this.client.incr(key);
+      if (current === 1 && ttlSeconds) {
+        await this.client.expire(key, ttlSeconds);
+      }
+      return current;
+    } catch (err) {
+      const now = Date.now();
+      const existing = this.fallbackMemoryMap.get(key);
+      const count = (existing ? parseInt(existing.value, 10) || 0 : 0) + 1;
+      this.fallbackMemoryMap.set(key, {
+        value: String(count),
+        expiresAt: ttlSeconds ? now + ttlSeconds * 1000 : undefined,
+      });
+      return count;
+    }
+  }
+
+  async decr(key: string): Promise<number> {
+    if (!this.isConnected) {
+      const existing = this.fallbackMemoryMap.get(key);
+      if (!existing) return 0;
+      const count = Math.max(0, (parseInt(existing.value, 10) || 0) - 1);
+      this.fallbackMemoryMap.set(key, { ...existing, value: String(count) });
+      return count;
+    }
+    try {
+      return await this.client.decr(key);
+    } catch (err) {
+      return 0;
+    }
+  }
+
+  async ttl(key: string): Promise<number> {
+    if (!this.isConnected) {
+      const item = this.fallbackMemoryMap.get(key);
+      if (!item || !item.expiresAt) return -1;
+      const rem = Math.max(0, Math.ceil((item.expiresAt - Date.now()) / 1000));
+      return rem;
+    }
+    try {
+      return await this.client.ttl(key);
+    } catch (err) {
+      return -1;
+    }
+  }
+
+  private fallbackRateLimitMap = new Map<string, { count: number; expiresAt: number }>();
 
   /**
    * Rate Limiting Counter (Sliding Window / Fixed Window)
@@ -105,7 +198,21 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     limit: number,
     windowSeconds: number,
   ): Promise<boolean> {
-    if (!this.isConnected) return true; // Fail open if Redis is offline
+    if (!this.isConnected) {
+      const key = `ratelimit:${event}:${identifier}`;
+      const now = Date.now();
+      const record = this.fallbackRateLimitMap.get(key);
+      if (!record || now > record.expiresAt) {
+        this.fallbackRateLimitMap.set(key, {
+          count: 1,
+          expiresAt: now + windowSeconds * 1000,
+        });
+        return true;
+      }
+      record.count += 1;
+      return record.count <= limit;
+    }
+
     try {
       const key = `ratelimit:${event}:${identifier}`;
       const current = await this.client.incr(key);
