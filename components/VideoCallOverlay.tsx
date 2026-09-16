@@ -48,24 +48,82 @@ export default function VideoCallOverlay({
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const [isRetryCoolingDown, setIsRetryCoolingDown] = useState(false);
 
-  // Attach local media stream to local video element
+  // Attach local media stream to local video element cleanly
   useEffect(() => {
-    if (localVideoRef.current && localStream) {
-      localVideoRef.current.srcObject = localStream;
-      localVideoRef.current.play().catch((err) => {
-        console.warn("[VideoCallOverlay] Local video play error:", err);
-      });
+    const video = localVideoRef.current;
+    if (!video) return;
+
+    if (!localStream) {
+      if (video.srcObject) {
+        video.srcObject = null;
+      }
+      return;
     }
+
+    // Only assign srcObject if not already attached to this stream
+    if (video.srcObject !== localStream) {
+      video.srcObject = localStream;
+    }
+
+    let isCancelled = false;
+    const playVideo = async () => {
+      try {
+        if (video.paused && !isCancelled) {
+          await video.play();
+        }
+      } catch (err: any) {
+        // Expected lifecycle race if play() is superseded by a new load request
+        if (isCancelled || err?.name === "AbortError") {
+          return;
+        }
+        console.warn("[VideoCallOverlay] Local video play error:", err);
+      }
+    };
+
+    playVideo();
+
+    return () => {
+      isCancelled = true;
+    };
   }, [localStream]);
 
-  // Attach remote media stream to remote video element
+  // Attach remote media stream to remote video element cleanly
   useEffect(() => {
-    if (remoteVideoRef.current && remoteStream) {
-      remoteVideoRef.current.srcObject = remoteStream;
-      remoteVideoRef.current.play().catch((err) => {
-        console.warn("[VideoCallOverlay] Remote video play error:", err);
-      });
+    const video = remoteVideoRef.current;
+    if (!video) return;
+
+    if (!remoteStream) {
+      if (video.srcObject) {
+        video.srcObject = null;
+      }
+      return;
     }
+
+    // Only assign srcObject if not already attached to this stream
+    if (video.srcObject !== remoteStream) {
+      video.srcObject = remoteStream;
+    }
+
+    let isCancelled = false;
+    const playVideo = async () => {
+      try {
+        if (video.paused && !isCancelled) {
+          await video.play();
+        }
+      } catch (err: any) {
+        // Expected lifecycle race if play() is superseded by a new load request
+        if (isCancelled || err?.name === "AbortError") {
+          return;
+        }
+        console.warn("[VideoCallOverlay] Remote video play error:", err);
+      }
+    };
+
+    playVideo();
+
+    return () => {
+      isCancelled = true;
+    };
   }, [remoteStream]);
 
   const handleRetryClick = () => {

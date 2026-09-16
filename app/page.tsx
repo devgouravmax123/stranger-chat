@@ -282,21 +282,27 @@ export default function Home() {
   // BROWSER HISTORY & NAVIGATION MANAGEMENT
   // ==========================================
 
+  const videoCallTeardownRef = useRef(videoCall.teardownCall);
+  videoCallTeardownRef.current = videoCall.teardownCall;
+
+  const friendVideoCallTeardownRef = useRef(friendVideoCall.teardownCall);
+  friendVideoCallTeardownRef.current = friendVideoCall.teardownCall;
+
   const navigateTo = useCallback(
     (view: AppView, pushToHistory = true) => {
       // If leaving stranger chat or friend chat, safely tear down any active video calls
       if (view !== "stranger-chat") {
-        videoCall.teardownCall();
+        videoCallTeardownRef.current?.();
       }
       if (view !== "friend-chat") {
-        friendVideoCall.teardownCall();
+        friendVideoCallTeardownRef.current?.();
       }
       setCurrentView(view);
       if (typeof window !== "undefined" && pushToHistory) {
         window.history.pushState({ view }, "", `?view=${view}`);
       }
     },
-    [videoCall, friendVideoCall]
+    []
   );
 
   useEffect(() => {
