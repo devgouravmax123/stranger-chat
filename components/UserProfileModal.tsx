@@ -48,150 +48,123 @@ export default function UserProfileModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-fadeIn"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl"
+        className="w-full max-w-md overflow-hidden rounded-2xl bg-zinc-900 border border-zinc-800 shadow-2xl text-zinc-100"
         onClick={(event) => event.stopPropagation()}
       >
         {/* HEADER */}
-
-        <div className="flex items-center justify-between border-b px-6 py-4">
-          <h2 className="text-lg font-semibold text-zinc-900">
+        <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
+          <h2 className="text-lg font-semibold text-white">
             Profile
           </h2>
 
           <button
             type="button"
             onClick={onClose}
-            className="flex h-9 w-9 items-center justify-center rounded-full bg-zinc-100 text-lg text-zinc-600 hover:bg-zinc-200"
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-800 text-base text-zinc-400 hover:bg-zinc-700 hover:text-white"
             aria-label="Close profile"
           >
-            ×
+            ✕
           </button>
         </div>
 
         {/* PROFILE CONTENT */}
-
         <div className="px-6 py-6">
-
           {/* AVATAR */}
-
           <div className="flex justify-center">
-            <div className="flex h-28 w-28 items-center justify-center rounded-full border-4 border-zinc-100 bg-zinc-50 text-6xl">
+            <div className="flex h-24 w-24 items-center justify-center rounded-full border-4 border-zinc-800 bg-zinc-800/60 text-5xl shadow-inner">
               {user.avatar || "👤"}
             </div>
           </div>
 
           {/* USERNAME */}
-
           <div className="mt-4 text-center">
-            <h3 className="text-2xl font-bold text-zinc-900">
+            <h3 className="text-xl font-bold text-white">
               {user.username || "Anonymous"}
             </h3>
           </div>
 
           {/* DETAILS */}
-
-          <div className="mt-6 space-y-3">
-
+          <div className="mt-6 space-y-2.5">
             {/* AGE */}
-
-            <div className="flex items-center justify-between rounded-xl bg-zinc-50 px-4 py-3">
-              <span className="text-sm text-zinc-500">
+            <div className="flex items-center justify-between rounded-xl bg-zinc-950/70 border border-zinc-800/80 px-4 py-2.5">
+              <span className="text-xs font-medium text-zinc-400">
                 Age
               </span>
-
-              <span className="text-sm font-medium text-zinc-900">
+              <span className="text-sm font-semibold text-zinc-200">
                 {user.age ?? "Not specified"}
               </span>
             </div>
 
             {/* GENDER */}
-
-            <div className="flex items-center justify-between rounded-xl bg-zinc-50 px-4 py-3">
-              <span className="text-sm text-zinc-500">
+            <div className="flex items-center justify-between rounded-xl bg-zinc-950/70 border border-zinc-800/80 px-4 py-2.5">
+              <span className="text-xs font-medium text-zinc-400">
                 Gender
               </span>
-
-              <span className="text-sm font-medium text-zinc-900">
+              <span className="text-sm font-semibold text-zinc-200">
                 {displayGender}
               </span>
             </div>
 
             {/* LANGUAGE */}
-
-            <div className="flex items-center justify-between rounded-xl bg-zinc-50 px-4 py-3">
-              <span className="text-sm text-zinc-500">
+            <div className="flex items-center justify-between rounded-xl bg-zinc-950/70 border border-zinc-800/80 px-4 py-2.5">
+              <span className="text-xs font-medium text-zinc-400">
                 Language
               </span>
-
-              <span className="text-sm font-medium text-zinc-900">
+              <span className="text-sm font-semibold text-zinc-200">
                 {user.language || "Not specified"}
               </span>
             </div>
 
             {/* LOOKING FOR */}
-
-            <div className="flex items-center justify-between rounded-xl bg-zinc-50 px-4 py-3">
-              <span className="text-sm text-zinc-500">
+            <div className="flex items-center justify-between rounded-xl bg-zinc-950/70 border border-zinc-800/80 px-4 py-2.5">
+              <span className="text-xs font-medium text-zinc-400">
                 Looking for
               </span>
-
-              <span className="text-sm font-medium text-zinc-900">
+              <span className="text-sm font-semibold text-indigo-400">
                 {displayGoal}
               </span>
             </div>
-
           </div>
 
           {/* INTERESTS */}
-
           <div className="mt-5">
-
-            <p className="mb-2 text-sm font-medium text-zinc-500">
+            <p className="mb-2 text-xs font-medium text-zinc-400 uppercase tracking-wider">
               Interests
             </p>
 
-            {user.interests &&
-            user.interests.length > 0 ? (
-              <div className="flex flex-wrap gap-2">
-                {user.interests.map(
-                  (interest) => (
-                    <span
-                      key={interest}
-                      className="rounded-full bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white"
-                    >
-                      {interest}
-                    </span>
-                  ),
-                )}
+            {user.interests && user.interests.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5">
+                {user.interests.map((interest) => (
+                  <span
+                    key={interest}
+                    className="rounded-full bg-zinc-800 border border-zinc-700/60 px-3 py-1 text-xs font-medium text-zinc-200"
+                  >
+                    {interest}
+                  </span>
+                ))}
               </div>
             ) : (
-              <p className="text-sm text-zinc-400">
+              <p className="text-xs text-zinc-500">
                 No interests added
               </p>
             )}
-
           </div>
-
         </div>
 
         {/* FOOTER */}
-
-        <div className="border-t px-6 py-4">
-
+        <div className="border-t border-zinc-800 px-6 py-4">
           <button
             type="button"
             onClick={onClose}
-            className="w-full rounded-xl bg-zinc-900 px-4 py-3 text-sm font-medium text-white hover:bg-zinc-700"
+            className="w-full rounded-xl bg-zinc-800 border border-zinc-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-zinc-700 transition"
           >
             Close
           </button>
-
         </div>
-
       </div>
     </div>
   );

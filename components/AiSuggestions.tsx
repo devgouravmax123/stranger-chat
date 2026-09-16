@@ -216,14 +216,14 @@ export default function AiSuggestions({
   };
 
   return (
-    <div className="border-t border-zinc-100 bg-gradient-to-r from-purple-50/50 via-indigo-50/40 to-blue-50/50 px-3 py-2 text-xs transition-all duration-200">
+    <div className="border-t border-zinc-800/80 bg-zinc-900/95 px-3 py-2 text-xs backdrop-blur-md transition-all duration-200">
       {/* Top action bar */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 min-w-0">
           <span className="flex h-5 w-5 items-center justify-center rounded-full bg-gradient-to-tr from-purple-600 to-indigo-600 text-[10px] text-white shadow-xs">
             ✨
           </span>
-          <span className="font-medium text-zinc-700 truncate">
+          <span className="font-medium text-zinc-300 truncate">
             {suggestions.length > 0
               ? "Conversation ideas"
               : "Need something to talk about?"}
@@ -232,7 +232,7 @@ export default function AiSuggestions({
 
         <div className="flex items-center gap-2 shrink-0">
           {cooldownSeconds > 0 && (
-            <span className="text-[11px] font-mono font-medium text-zinc-500 bg-white/80 px-2 py-0.5 rounded-md border border-zinc-200 shadow-2xs">
+            <span className="text-[11px] font-mono font-medium text-amber-400 bg-amber-950/40 px-2 py-0.5 rounded-md border border-amber-800/50">
               ⏳ {cooldownSeconds}s
             </span>
           )}
@@ -241,7 +241,7 @@ export default function AiSuggestions({
             type="button"
             onClick={handleFetchSuggestions}
             disabled={isLoading || cooldownSeconds > 0 || disabled}
-            className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 px-3 py-1 font-medium text-white shadow-sm transition hover:from-purple-700 hover:to-indigo-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100"
+            className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-indigo-600 to-purple-600 px-3 py-1 font-medium text-white shadow-sm transition hover:from-indigo-500 hover:to-purple-500 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100"
             title={
               cooldownSeconds > 0
                 ? `Wait ${cooldownSeconds}s`
@@ -267,7 +267,7 @@ export default function AiSuggestions({
             <button
               type="button"
               onClick={() => setIsExpanded(!isExpanded)}
-              className="rounded-md p-1 text-zinc-400 hover:bg-zinc-200/60 hover:text-zinc-700"
+              className="rounded-md p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
               title={isExpanded ? "Collapse suggestions" : "Expand suggestions"}
               aria-label="Toggle suggestions"
             >
@@ -279,12 +279,12 @@ export default function AiSuggestions({
 
       {/* Info message: e.g. "Start chatting first..." or "Chat a little more..." */}
       {infoMessage && (
-        <div className="mt-2 flex items-center justify-between rounded-lg bg-blue-50 border border-blue-200/80 px-2.5 py-1.5 text-[11px] text-blue-700 animate-fadeIn">
+        <div className="mt-2 flex items-center justify-between rounded-lg bg-indigo-950/40 border border-indigo-800/60 px-2.5 py-1.5 text-[11px] text-indigo-300 animate-fadeIn">
           <span>💬 {infoMessage}</span>
           <button
             type="button"
             onClick={() => setInfoMessage(null)}
-            className="ml-2 font-bold text-blue-400 hover:text-blue-700"
+            className="ml-2 font-bold text-indigo-400 hover:text-indigo-200"
           >
             ✕
           </button>
@@ -293,12 +293,12 @@ export default function AiSuggestions({
 
       {/* Error message: e.g. "Couldn't generate suggestions right now. Please try again." */}
       {errorMessage && (
-        <div className="mt-2 flex items-center justify-between rounded-lg bg-red-50 border border-red-200/80 px-2.5 py-1.5 text-[11px] text-red-600 animate-fadeIn">
+        <div className="mt-2 flex items-center justify-between rounded-lg bg-red-950/40 border border-red-800/60 px-2.5 py-1.5 text-[11px] text-red-300 animate-fadeIn">
           <span>⚠️ {errorMessage}</span>
           <button
             type="button"
             onClick={() => setErrorMessage(null)}
-            className="ml-2 font-bold text-red-400 hover:text-red-700"
+            className="ml-2 font-bold text-red-400 hover:text-red-200"
           >
             ✕
           </button>
@@ -308,7 +308,7 @@ export default function AiSuggestions({
       {/* Suggestions List */}
       {isExpanded && suggestions.length > 0 && (
         <div className="mt-2 space-y-1.5 animate-fadeIn">
-          <p className="text-[10px] uppercase tracking-wider text-zinc-500 font-semibold px-0.5">
+          <p className="text-[10px] uppercase tracking-wider text-zinc-400 font-semibold px-0.5">
             Conversation ideas (click to use):
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
@@ -318,10 +318,10 @@ export default function AiSuggestions({
                 type="button"
                 onClick={() => handleSuggestionClick(item)}
                 disabled={disabled}
-                className="group relative flex items-start gap-1.5 rounded-xl border border-purple-200/70 bg-white/90 p-2 text-left text-xs text-zinc-700 shadow-2xs transition hover:border-purple-400 hover:bg-purple-50/70 hover:shadow-xs active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+                className="group relative flex items-start gap-1.5 rounded-xl border border-zinc-700/70 bg-zinc-800/80 p-2.5 text-left text-xs text-zinc-200 shadow-sm transition hover:border-indigo-500/70 hover:bg-zinc-800 hover:text-white active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
                 title="Click to insert into message input"
               >
-                <span className="mt-0.5 text-purple-600 group-hover:scale-110 transition-transform">
+                <span className="mt-0.5 text-indigo-400 group-hover:scale-110 transition-transform">
                   💡
                 </span>
                 <span className="flex-1 line-clamp-3 leading-snug font-normal">

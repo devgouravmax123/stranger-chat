@@ -60,11 +60,11 @@ export default function MessageList({
       case "sending":
         return <span className="text-[10px] text-zinc-400">⏳</span>;
       case "sent":
-        return <span className="text-[10px] text-zinc-400" title="Sent">✓</span>;
+        return <span className="text-[10px] text-zinc-400 tracking-tight" title="Sent">✓</span>;
       case "delivered":
-        return <span className="text-[10px] text-zinc-400" title="Delivered">✓✓</span>;
+        return <span className="text-[10px] text-zinc-400 tracking-tight" title="Delivered">✓✓</span>;
       case "seen":
-        return <span className="text-[10px] text-blue-400 font-bold" title="Seen">✓✓</span>;
+        return <span className="text-[10px] text-sky-400 font-bold tracking-tight" title="Seen">✓✓</span>;
       default:
         return null;
     }
@@ -78,11 +78,15 @@ export default function MessageList({
   };
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 space-y-3">
+    <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3">
       {messages.length === 0 ? (
-        <div className="h-full flex items-center justify-center">
-          <p className="text-sm text-zinc-400">
-            No messages yet. Start the conversation!
+        <div className="h-full flex flex-col items-center justify-center text-center p-6 text-zinc-500">
+          <div className="w-12 h-12 rounded-2xl bg-zinc-800/60 border border-zinc-700/40 flex items-center justify-center text-2xl mb-3 shadow-inner">
+            💬
+          </div>
+          <p className="text-sm font-semibold text-zinc-300">No messages yet</p>
+          <p className="text-xs text-zinc-500 mt-1 max-w-xs">
+            Say hello or tap a conversation idea below to break the ice!
           </p>
         </div>
       ) : (
@@ -99,7 +103,7 @@ export default function MessageList({
               }`}
             >
               <div
-                className={`relative flex items-center gap-2 max-w-[85%] ${
+                className={`relative flex items-center gap-2 max-w-[88%] sm:max-w-[75%] md:max-w-[70%] ${
                   isMe ? "flex-row-reverse" : "flex-row"
                 }`}
               >
@@ -107,12 +111,12 @@ export default function MessageList({
                 <div
                   className={`rounded-2xl transition-all shadow-sm ${
                     isDeleted
-                      ? "bg-zinc-100 text-zinc-400 italic px-4 py-2 text-xs border border-zinc-200"
+                      ? "bg-zinc-800/50 text-zinc-400 italic px-4 py-2 text-xs border border-zinc-800"
                       : message.type === "audio"
-                      ? "p-1.5 " + (isMe ? "bg-zinc-900 text-white" : "bg-zinc-100 text-zinc-900")
+                      ? "p-1.5 " + (isMe ? "bg-gradient-to-r from-indigo-600 to-indigo-700 text-white rounded-tr-xs shadow-md shadow-indigo-900/20" : "bg-zinc-800 text-zinc-100 border border-zinc-700/60 rounded-tl-xs")
                       : message.type === "image"
-                      ? "p-2 " + (isMe ? "bg-zinc-900 text-white" : "bg-zinc-100 text-zinc-900")
-                      : "px-4 py-2.5 " + (isMe ? "bg-zinc-900 text-white" : "bg-zinc-100 text-zinc-900")
+                      ? "p-2 " + (isMe ? "bg-gradient-to-r from-indigo-600 to-indigo-700 text-white rounded-tr-xs shadow-md shadow-indigo-900/20" : "bg-zinc-800 text-zinc-100 border border-zinc-700/60 rounded-tl-xs")
+                      : "px-4 py-2.5 " + (isMe ? "bg-gradient-to-r from-indigo-600 to-indigo-700 text-white rounded-tr-xs shadow-md shadow-indigo-900/20" : "bg-zinc-800 text-zinc-100 border border-zinc-700/60 rounded-tl-xs")
                   }`}
                 >
                   {/* REPLIED QUOTE PREVIEW */}
@@ -121,13 +125,13 @@ export default function MessageList({
                       className={`mb-2 rounded-xl p-2 text-xs border-l-2 ${
                         isMe
                           ? "bg-white/10 border-white text-zinc-200"
-                          : "bg-zinc-200/60 border-zinc-900 text-zinc-700"
+                          : "bg-zinc-900/80 border-indigo-500 text-zinc-300"
                       }`}
                     >
-                      <p className="font-semibold text-[10px]">
+                      <p className="font-semibold text-[10px] text-zinc-300">
                         ↩ {message.replyTo.sender === "me" ? "You" : "Stranger"}
                       </p>
-                      <p className="truncate font-mono text-[11px] mt-0.5">
+                      <p className="truncate font-mono text-[11px] mt-0.5 text-zinc-400">
                         {formatParentReply(message.replyTo)}
                       </p>
                     </div>
@@ -154,13 +158,13 @@ export default function MessageList({
                           className="h-full w-full object-cover transition transform duration-200 group-hover/img:scale-105"
                           loading="lazy"
                         />
-                        <div className="absolute inset-0 bg-black/20 opacity-0 group-hover/img:opacity-100 transition flex items-center justify-center text-white text-xs font-semibold">
+                        <div className="absolute inset-0 bg-black/30 opacity-0 group-hover/img:opacity-100 transition flex items-center justify-center text-white text-xs font-semibold backdrop-blur-2xs">
                           🔍 Expand
                         </div>
                       </div>
 
                       {message.text && message.text !== "Photo message" && (
-                        <p className="px-1 break-words whitespace-pre-wrap text-sm">
+                        <p className="px-1 break-words whitespace-pre-wrap text-sm leading-relaxed">
                           {message.text}
                         </p>
                       )}
@@ -176,7 +180,7 @@ export default function MessageList({
                   <div
                     className={`mt-1 flex items-center justify-end gap-1 text-[10px] ${
                       message.type === "image" ? "px-1" : ""
-                    } ${isMe ? "text-zinc-400" : "text-zinc-500"}`}
+                    } ${isMe ? "text-indigo-200/80" : "text-zinc-400"}`}
                   >
                     <span>
                       {new Date(message.timestamp).toLocaleTimeString([], {
@@ -195,7 +199,7 @@ export default function MessageList({
                       <button
                         type="button"
                         onClick={() => onReplyMessage(message)}
-                        className="h-7 w-7 rounded-full bg-zinc-100 hover:bg-zinc-200 text-zinc-600 flex items-center justify-center text-xs shadow-sm transition"
+                        className="h-7 w-7 rounded-full bg-zinc-800/90 hover:bg-zinc-700 text-zinc-300 hover:text-white flex items-center justify-center text-xs shadow-sm transition border border-zinc-700/60"
                         title="Reply"
                       >
                         ↩
@@ -210,7 +214,7 @@ export default function MessageList({
                             prev === message.id ? null : (message.id || null),
                           )
                         }
-                        className="h-7 w-7 rounded-full bg-zinc-100 hover:bg-zinc-200 text-zinc-600 flex items-center justify-center text-xs shadow-sm transition"
+                        className="h-7 w-7 rounded-full bg-zinc-800/90 hover:bg-zinc-700 text-zinc-300 hover:text-white flex items-center justify-center text-xs shadow-sm transition border border-zinc-700/60"
                         title="React"
                       >
                         😊
@@ -221,7 +225,7 @@ export default function MessageList({
                       <button
                         type="button"
                         onClick={() => onDeleteMessage(message.id!)}
-                        className="h-7 w-7 rounded-full bg-red-50 hover:bg-red-100 text-red-600 flex items-center justify-center text-xs shadow-sm transition"
+                        className="h-7 w-7 rounded-full bg-red-950/60 hover:bg-red-900/80 text-red-400 hover:text-red-300 flex items-center justify-center text-xs shadow-sm transition border border-red-800/50"
                         title="Delete"
                       >
                         🗑
@@ -234,7 +238,7 @@ export default function MessageList({
               {/* EMOJI REACTION POPUP BAR */}
               {activeActionId === message.id && onToggleReaction && message.id && (
                 <div
-                  className={`mt-1 flex items-center gap-1 rounded-full bg-white p-1.5 shadow-lg border border-zinc-200 z-20 animate-fadeIn ${
+                  className={`mt-1 flex items-center gap-1 rounded-full bg-zinc-900 p-1.5 shadow-2xl border border-zinc-700/80 z-20 animate-fadeIn ${
                     isMe ? "mr-2" : "ml-2"
                   }`}
                 >
@@ -246,7 +250,7 @@ export default function MessageList({
                         onToggleReaction(message.id!, emoji);
                         setActiveActionId(null);
                       }}
-                      className="h-7 w-7 rounded-full text-base transition transform hover:scale-125 hover:bg-zinc-100 flex items-center justify-center"
+                      className="h-7 w-7 rounded-full text-base transition transform hover:scale-125 hover:bg-zinc-800 flex items-center justify-center"
                     >
                       {emoji}
                     </button>

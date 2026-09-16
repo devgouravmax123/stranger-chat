@@ -161,7 +161,7 @@ export default function EditProfileModal({
 
           {/* Username */}
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">
+            <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-300 mb-1.5">
               Username
             </label>
             <input
@@ -170,14 +170,14 @@ export default function EditProfileModal({
               onChange={(e) => setUsername(e.target.value)}
               placeholder="e.g. Alex_Code"
               maxLength={20}
-              className="w-full rounded-xl bg-zinc-950 border border-zinc-800 px-4 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500 transition placeholder-zinc-600"
+              className="w-full rounded-xl bg-zinc-950 border border-zinc-700/80 px-4 py-2.5 text-sm text-white placeholder-zinc-500 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition"
             />
           </div>
 
           {/* Age & Gender Grid */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-300 mb-1.5">
                 Age
               </label>
               <input
@@ -187,18 +187,18 @@ export default function EditProfileModal({
                 value={age}
                 onChange={(e) => setAge(e.target.value)}
                 placeholder="18"
-                className="w-full rounded-xl bg-zinc-950 border border-zinc-800 px-4 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500 transition placeholder-zinc-600"
+                className="w-full rounded-xl bg-zinc-950 border border-zinc-700/80 px-4 py-2.5 text-sm text-white placeholder-zinc-500 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-300 mb-1.5">
                 Gender
               </label>
               <select
                 value={gender}
                 onChange={(e) => setGender(e.target.value)}
-                className="w-full rounded-xl bg-zinc-950 border border-zinc-800 px-3 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500 transition"
+                className="w-full rounded-xl bg-zinc-950 border border-zinc-700/80 px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition"
               >
                 <option value="male">Male</option>
                 <option value="female">Female</option>

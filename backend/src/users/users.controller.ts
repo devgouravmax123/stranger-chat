@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Put,
@@ -57,5 +58,23 @@ export class UsersController {
     return this.usersService.getProfile(
       userId,
     );
+  }
+
+  // ==========================================
+  // DELETE USER ACCOUNT
+  // ==========================================
+
+  @Delete(':userId/account')
+  async deleteAccount(
+    @Param('userId') userId: string,
+  ) {
+    return this.usersService.deleteAccount(userId);
+  }
+
+  @Delete(':userId')
+  async deleteUser(
+    @Param('userId') userId: string,
+  ) {
+    return this.usersService.deleteAccount(userId);
   }
 }

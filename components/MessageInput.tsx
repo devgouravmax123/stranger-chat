@@ -167,18 +167,18 @@ export default function MessageInput({
   };
 
   return (
-    <div className="border-t bg-white p-3">
+    <div className="border-t border-zinc-800/90 bg-zinc-900/95 p-3 shrink-0">
       {/* ====================================== */}
       {/* REPLY PREVIEW BAR */}
       {/* ====================================== */}
 
       {replyingTo && (
-        <div className="mb-2.5 flex items-center justify-between gap-2 rounded-xl bg-zinc-100 px-3 py-2 border-l-4 border-zinc-900 animate-fadeIn">
+        <div className="mb-2.5 flex items-center justify-between gap-2 rounded-xl bg-zinc-950 px-3 py-2 border-l-4 border-indigo-500 border border-zinc-800 animate-fadeIn text-zinc-200">
           <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-bold text-zinc-700">
+            <p className="text-[11px] font-bold text-indigo-400">
               ↩ Replying to {replyingTo.sender === "me" ? "yourself" : "Stranger"}
             </p>
-            <p className="text-xs text-zinc-600 truncate font-mono mt-0.5">
+            <p className="text-xs text-zinc-400 truncate font-mono mt-0.5">
               {renderReplyText(replyingTo)}
             </p>
           </div>
@@ -186,7 +186,7 @@ export default function MessageInput({
             <button
               type="button"
               onClick={onCancelReply}
-              className="rounded-lg p-1 text-zinc-500 hover:bg-zinc-200"
+              className="rounded-lg p-1 text-zinc-400 hover:text-white hover:bg-zinc-800 transition"
               title="Cancel reply"
             >
               ✕
@@ -200,11 +200,12 @@ export default function MessageInput({
       {/* ====================================== */}
 
       {showEmojiPicker && (
-        <div className="mb-3">
+        <div className="mb-3 rounded-2xl overflow-hidden border border-zinc-800 shadow-2xl">
           <EmojiPicker
             onEmojiClick={handleEmojiClick}
             width="100%"
-            height={350}
+            height={320}
+            theme={"dark" as any}
             searchDisabled={false}
             skinTonesDisabled={false}
             previewConfig={{
@@ -219,8 +220,8 @@ export default function MessageInput({
       {/* ====================================== */}
 
       {attachedImage && (
-        <div className="mb-3 flex items-center gap-3 rounded-xl bg-zinc-100 p-2.5 border border-zinc-200 animate-fadeIn">
-          <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-zinc-300 shadow-sm">
+        <div className="mb-3 flex items-center gap-3 rounded-xl bg-zinc-950 p-2.5 border border-zinc-800 animate-fadeIn">
+          <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-zinc-700 shadow-sm">
             <img
               src={attachedImage}
               alt="Attached preview"
@@ -229,10 +230,10 @@ export default function MessageInput({
           </div>
 
           <div className="flex-1 min-w-0">
-            <p className="text-xs font-semibold text-zinc-800 truncate">
+            <p className="text-xs font-semibold text-zinc-200 truncate">
               Photo Attached
             </p>
-            <p className="text-[11px] text-zinc-500">
+            <p className="text-[11px] text-zinc-400">
               Ready to send with your message
             </p>
           </div>
@@ -241,7 +242,7 @@ export default function MessageInput({
             type="button"
             onClick={clearAttachedImage}
             title="Remove attachment"
-            className="flex h-8 w-8 items-center justify-center rounded-lg bg-zinc-200 text-zinc-700 font-bold hover:bg-zinc-300"
+            className="flex h-8 w-8 items-center justify-center rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white font-bold transition"
           >
             ✕
           </button>
@@ -266,40 +267,36 @@ export default function MessageInput({
 
       <div className="flex items-center gap-2">
         {/* EMOJI */}
-
         <button
           type="button"
           onClick={() => setShowEmojiPicker((previous) => !previous)}
           disabled={disabled}
-          className="h-11 w-11 shrink-0 rounded-xl bg-zinc-100 text-2xl transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
+          className="h-11 w-11 shrink-0 rounded-xl bg-zinc-800/90 hover:bg-zinc-700 border border-zinc-700/60 text-xl transition disabled:cursor-not-allowed disabled:opacity-50 flex items-center justify-center text-zinc-200"
           aria-label="Open emoji picker"
         >
           😊
         </button>
 
         {/* PHOTO / MEDIA ATTACH */}
-
         <button
           type="button"
           onClick={handlePhotoClick}
           disabled={disabled || isCompressing}
-          className="h-11 w-11 shrink-0 rounded-xl bg-zinc-100 text-xl transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-50 flex items-center justify-center"
+          className="h-11 w-11 shrink-0 rounded-xl bg-zinc-800/90 hover:bg-zinc-700 border border-zinc-700/60 text-xl transition disabled:cursor-not-allowed disabled:opacity-50 flex items-center justify-center text-zinc-200"
           title="Send photo"
           aria-label="Upload photo"
         >
           {isCompressing ? (
-            <span className="h-4 w-4 animate-spin rounded-full border-2 border-zinc-400 border-t-zinc-900" />
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-zinc-400 border-t-white" />
           ) : (
             "📷"
           )}
         </button>
 
         {/* VOICE */}
-
         <VoiceRecorder onRecorded={handleVoiceRecorded} disabled={disabled} />
 
         {/* TEXT */}
-
         <input
           type="text"
           placeholder={
@@ -313,16 +310,15 @@ export default function MessageInput({
           onChange={handleInputChange}
           onKeyDown={handleKeyDown}
           disabled={disabled}
-          className="min-w-0 flex-1 rounded-xl border border-zinc-300 px-4 py-3 outline-none focus:border-zinc-500 disabled:bg-zinc-100 text-sm"
+          className="min-w-0 flex-1 rounded-xl bg-zinc-950 border border-zinc-700/80 px-4 py-3 text-sm text-white placeholder-zinc-500 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 disabled:bg-zinc-900 transition"
         />
 
         {/* SEND */}
-
         <button
           type="button"
           onClick={handleSend}
           disabled={disabled || (!attachedImage && message.trim() === "")}
-          className="rounded-xl bg-zinc-900 px-5 py-3 font-medium text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300 shrink-0 text-sm"
+          className="rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 px-5 py-3 font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-40 shrink-0 text-sm shadow-sm active:scale-95"
         >
           Send
         </button>

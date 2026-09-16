@@ -11,6 +11,8 @@ import { Server, Socket } from 'socket.io';
 import { PrismaService } from '../prisma.service.js';
 import { RedisService } from '../redis/redis.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
+import { UsersService } from '../users/users.service.js';
+import { FriendsService } from '../friends/friends.service.js';
 
 interface MatchPreferences {
   language: string;
@@ -79,6 +81,7 @@ export class ChatGateway implements OnGatewayInit {
   private inMemoryWaitingUsers: WaitingUser[] = [];
   private inMemoryUserRooms = new Map<string, string>();
   private inMemorySocketUsers = new Map<string, string>();
+  private inMemoryUserSockets = new Map<string, Set<string>>();
   private inMemorySocketChats = new Map<string, string>();
   private inMemoryUserPreferences = new Map<string, MatchPreferences>();
 
@@ -86,17 +89,122 @@ export class ChatGateway implements OnGatewayInit {
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
     private readonly notifications: NotificationsService,
+    private readonly usersService: UsersService,
+    private readonly friendsService: FriendsService,
   ) {}
 
   afterInit(server: Server) {
     this.notifications.registerNotificationEmitter((userId: string, notification: any) => {
-      // Find all connected sockets belonging to this userId
-      for (const [sockId, uid] of this.inMemorySocketUsers.entries()) {
-        if (uid === userId) {
-          this.server.to(sockId).emit('new_notification', notification);
+      this.server.to(`user:${userId}`).emit('new_notification', notification);
+    });
+
+    this.usersService.registerDeletionHook(async (userId: string) => {
+      await this.handleUserAccountDeleted(userId);
+    });
+
+    this.friendsService.registerPresenceChecker(async (userId: string) => {
+      return this.isUserOnline(userId);
+    });
+  }
+
+  // ==========================================
+  // MULTI-SOCKET PRESENCE HELPERS
+  // ==========================================
+
+  async isUserOnline(userId: string): Promise<boolean> {
+    const sockets = this.inMemoryUserSockets.get(userId);
+    if (sockets && sockets.size > 0) return true;
+    return await this.redis.isUserOnline(userId);
+  }
+
+  async recordUserOnline(socket: Socket, userId: string) {
+    socket.join(`user:${userId}`);
+    this.inMemorySocketUsers.set(socket.id, userId);
+
+    let sockets = this.inMemoryUserSockets.get(userId);
+    if (!sockets) {
+      sockets = new Set<string>();
+      this.inMemoryUserSockets.set(userId, sockets);
+    }
+    const wasOffline = sockets.size === 0;
+    sockets.add(socket.id);
+
+    const activeCount = await this.redis.addUserSocketPresence(userId, socket.id);
+    await this.redis.setSocketMapping(socket.id, { userId });
+
+    if (wasOffline || activeCount === 1) {
+      this.broadcastFriendPresence(userId, true);
+    }
+  }
+
+  async recordUserDisconnect(socket: Socket) {
+    const userId = this.inMemorySocketUsers.get(socket.id);
+    if (userId) {
+      const sockets = this.inMemoryUserSockets.get(userId);
+      if (sockets) {
+        sockets.delete(socket.id);
+        if (sockets.size === 0) {
+          this.inMemoryUserSockets.delete(userId);
         }
       }
-    });
+      this.inMemorySocketUsers.delete(socket.id);
+
+      const remaining = await this.redis.removeUserSocketPresence(userId, socket.id);
+      const remainingInMemory = this.inMemoryUserSockets.get(userId)?.size || 0;
+
+      if (remaining === 0 && remainingInMemory === 0) {
+        const lastSeenAt = new Date();
+        await this.prisma.user.update({
+          where: { id: userId },
+          data: { lastSeenAt },
+        }).catch(() => null);
+
+        this.broadcastFriendPresence(userId, false, lastSeenAt);
+      }
+    }
+  }
+
+  async broadcastFriendPresence(userId: string, isOnline: boolean, lastSeenAt?: Date) {
+    try {
+      const friendships = await this.prisma.friendship.findMany({
+        where: {
+          OR: [{ userAId: userId }, { userBId: userId }],
+        },
+        select: { userAId: true, userBId: true },
+      });
+
+      const payload = {
+        userId,
+        isOnline,
+        lastSeenAt: lastSeenAt ? lastSeenAt.toISOString() : new Date().toISOString(),
+      };
+
+      for (const f of friendships) {
+        const friendId = f.userAId === userId ? f.userBId : f.userAId;
+        this.server.to(`user:${friendId}`).emit('friend_status_changed', payload);
+      }
+    } catch (err) {
+      console.warn('[Presence] Could not broadcast friend presence:', err);
+    }
+  }
+
+  async handleUserAccountDeleted(userId: string) {
+    const sockets = this.inMemoryUserSockets.get(userId);
+    if (sockets) {
+      for (const socketId of Array.from(sockets)) {
+        const sock = this.server.sockets.sockets.get(socketId);
+        if (sock) {
+          const roomId = this.inMemoryUserRooms.get(socketId);
+          if (roomId) {
+            sock.to(roomId).emit('stranger_left');
+            sock.leave(roomId);
+          }
+          sock.disconnect(true);
+        }
+      }
+      this.inMemoryUserSockets.delete(userId);
+    }
+    this.broadcastFriendPresence(userId, false);
   }
 
   // ==========================================
@@ -109,12 +217,7 @@ export class ChatGateway implements OnGatewayInit {
     const userId = await this.getUserId(socket);
 
     if (userId) {
-      this.inMemorySocketUsers.set(socket.id, userId);
-      if (this.redis.getIsConnected()) {
-        await this.redis.setPresence(socket.id, 'online');
-        await this.redis.setSocketMapping(socket.id, { userId });
-      }
-
+      await this.recordUserOnline(socket, userId);
       socket.emit('user_ready', { userId });
       console.log('User ready:', userId);
     }
@@ -126,11 +229,7 @@ export class ChatGateway implements OnGatewayInit {
     @MessageBody() data: { userId: string },
   ) {
     if (!data?.userId) return;
-    this.inMemorySocketUsers.set(socket.id, data.userId);
-    if (this.redis.getIsConnected()) {
-      await this.redis.setPresence(socket.id, 'online');
-      await this.redis.setSocketMapping(socket.id, { userId: data.userId });
-    }
+    await this.recordUserOnline(socket, data.userId);
   }
 
   @SubscribeMessage('leave_friend_room')
@@ -707,39 +806,60 @@ export class ChatGateway implements OnGatewayInit {
       }
     }
 
-    if (!roomId && chatId) {
-      const chat = await this.prisma.chat.findUnique({
-        where: { id: chatId },
-        include: { friendship: true },
-      });
-      if (chat) {
-        roomId = chat.friendship
-          ? `friend-${[chat.userAId, chat.userBId].sort().join('-')}`
-          : chat.id;
+    if (!chatId && roomId) {
+      const matchState = await this.redis.getMatchState(roomId);
+      if (matchState?.chatId) {
+        chatId = matchState.chatId;
       }
     }
 
-    if (!roomId || !chatId || !userId) return;
+    if (!userId || !chatId) return;
 
-    // Update messages in DB
+    // Verify conversation membership
+    const chat = await this.prisma.chat.findUnique({
+      where: { id: chatId },
+      select: { id: true, userAId: true, userBId: true },
+    });
+
+    if (!chat || (chat.userAId !== userId && chat.userBId !== userId)) return;
+
+    const otherUserId = chat.userAId === userId ? chat.userBId : chat.userAId;
+
+    // Bulk update unread messages in DB
+    const whereClause: any = {
+      chatId,
+      senderId: otherUserId,
+      status: { not: 'seen' },
+    };
+
+    if (data?.messageIds && data.messageIds.length > 0) {
+      whereClause.id = { in: data.messageIds };
+    }
+
     const updateResult = await this.prisma.message.updateMany({
-      where: {
-        chatId,
-        senderId: { not: userId },
-        status: { not: 'seen' },
-      },
+      where: whereClause,
       data: {
         status: 'seen',
         seenAt: new Date(),
       },
     });
 
-    // Notify stranger / friend room that messages were seen
-    this.server.to(roomId).emit('message_seen', {
+    const seenPayload = {
       chatId,
       messageIds: data?.messageIds || [],
       count: updateResult.count,
-    });
+    };
+
+    // 1. Notify stranger / friend room if present
+    if (roomId) {
+      this.server.to(roomId).emit('message_seen', seenPayload);
+    }
+
+    // 2. Guaranteed delivery: notify other participant's personal room
+    this.server.to(`user:${otherUserId}`).emit('message_seen', seenPayload);
+
+    // 3. Notify caller's personal room
+    this.server.to(`user:${userId}`).emit('message_seen', seenPayload);
   }
 
   // ==========================================
@@ -1318,11 +1438,12 @@ export class ChatGateway implements OnGatewayInit {
       this.inMemoryWaitingUsers = this.inMemoryWaitingUsers.filter(
         (wu) => wu.socket.id !== socket.id,
       );
-      await this.leaveChat(socket, 'ended');
-      this.inMemorySocketUsers.delete(socket.id);
       this.inMemoryUserPreferences.delete(socket.id);
       this.inMemorySocketChats.delete(socket.id);
+      this.inMemoryUserRooms.delete(socket.id);
     }
+
+    await this.recordUserDisconnect(socket);
   }
 
   // ==========================================

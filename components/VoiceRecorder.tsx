@@ -177,20 +177,20 @@ export default function VoiceRecorder({
     <div className="flex items-center gap-2">
       {/* RECORDING IN PROGRESS */}
       {recording && (
-        <div className="flex items-center gap-2 rounded-xl bg-red-50 border border-red-200 px-3 py-1.5 text-sm text-red-600 animate-fadeIn">
+        <div className="flex items-center gap-2 rounded-xl bg-red-950/80 border border-red-800/80 px-3 py-1.5 text-sm text-red-300 animate-fadeIn">
           <span className="relative flex h-3 w-3">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
-            <span className="relative inline-flex rounded-full h-3 w-3 bg-red-600" />
+            <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500" />
           </span>
 
-          <span className="font-mono font-medium">{formatDuration(duration)}</span>
+          <span className="font-mono font-medium text-xs">{formatDuration(duration)}</span>
 
           {/* STOP & REVIEW */}
           <button
             type="button"
             onClick={stopAndPreview}
             title="Done recording"
-            className="ml-1 rounded-lg bg-red-600 px-2 py-1 text-xs font-semibold text-white transition hover:bg-red-700 active:scale-95"
+            className="ml-1 rounded-lg bg-red-600 px-2 py-1 text-xs font-semibold text-white transition hover:bg-red-500 active:scale-95"
           >
             Done ⏹
           </button>
@@ -200,7 +200,7 @@ export default function VoiceRecorder({
             type="button"
             onClick={cancelRecording}
             title="Cancel recording"
-            className="rounded-lg bg-zinc-200 px-2 py-1 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-300"
+            className="rounded-lg bg-zinc-800 border border-zinc-700 px-2 py-1 text-xs font-semibold text-zinc-300 transition hover:bg-zinc-700"
           >
             ✕
           </button>
@@ -209,7 +209,7 @@ export default function VoiceRecorder({
 
       {/* PREVIEW & SEND SCREEN */}
       {previewUrl && !recording && (
-        <div className="flex items-center gap-2 rounded-xl bg-zinc-100 border border-zinc-200 p-1.5">
+        <div className="flex items-center gap-2 rounded-xl bg-zinc-800 border border-zinc-700/80 p-1.5">
           <audio src={previewUrl} controls className="h-8 max-w-[180px]" />
 
           <button
@@ -217,7 +217,7 @@ export default function VoiceRecorder({
             onClick={() => sendRecordedVoice()}
             disabled={isSending}
             title="Send Voice Note"
-            className="flex h-8 w-8 items-center justify-center rounded-lg bg-zinc-900 text-white text-xs font-bold transition hover:bg-zinc-800 active:scale-95 disabled:opacity-50"
+            className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition active:scale-95 disabled:opacity-50"
           >
             ✓
           </button>
@@ -226,7 +226,7 @@ export default function VoiceRecorder({
             type="button"
             onClick={cancelRecording}
             title="Discard Voice Note"
-            className="flex h-8 w-8 items-center justify-center rounded-lg bg-zinc-200 text-zinc-700 text-xs font-bold transition hover:bg-zinc-300 active:scale-95"
+            className="flex h-8 w-8 items-center justify-center rounded-lg bg-zinc-700 text-zinc-300 text-xs font-bold transition hover:bg-zinc-600 active:scale-95"
           >
             🗑
           </button>
@@ -240,7 +240,7 @@ export default function VoiceRecorder({
           onClick={startRecording}
           disabled={disabled}
           title="Record Voice Note"
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-zinc-100 text-xl transition hover:bg-zinc-200 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-700/60 text-xl text-zinc-200 transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
         >
           🎙️
         </button>

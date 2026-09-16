@@ -42,13 +42,13 @@ export default function ChatHeader({
   };
 
   return (
-    <header className="border-b border-zinc-200 px-4 py-3 flex items-center justify-between bg-white relative">
-      <div className="flex items-center gap-2.5">
+    <header className="border-b border-zinc-800/90 px-4 py-2.5 flex items-center justify-between bg-zinc-900/90 backdrop-blur-md relative z-20 shrink-0">
+      <div className="flex items-center gap-2.5 min-w-0">
         {onToggleSidebar && (
           <button
             type="button"
             onClick={onToggleSidebar}
-            className="h-8 w-8 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-700 flex items-center justify-center text-base font-mono transition"
+            className="h-8 w-8 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 hover:text-white flex items-center justify-center text-sm font-mono border border-zinc-700/50 transition active:scale-95 shrink-0"
             title="Toggle Sidebar"
           >
             ☰
@@ -58,28 +58,28 @@ export default function ChatHeader({
           <button
             type="button"
             onClick={onBack}
-            className="px-2.5 py-1.5 rounded-xl bg-zinc-100 text-zinc-700 text-xs font-semibold hover:bg-zinc-200 transition"
+            className="px-2.5 py-1.5 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 hover:text-white text-xs font-semibold border border-zinc-700/50 transition shrink-0"
             title="Leave chat and return to main screen"
           >
             ← Back
           </button>
         )}
-        <div>
-          <h1 className="text-base font-bold text-zinc-900 leading-tight">
+        <div className="min-w-0">
+          <h1 className="text-sm font-bold text-white leading-tight truncate">
             Stranger Chat
           </h1>
-          <div className="text-xs mt-0.5">{getStatusBadge()}</div>
+          <div className="text-[11px] mt-0.5">{getStatusBadge()}</div>
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 shrink-0">
         {/* NEXT STRANGER / SKIP BUTTON */}
         {onSkip && (
           <button
             type="button"
             onClick={onSkip}
             title="Skip to next stranger"
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-zinc-900 text-white text-xs font-semibold hover:bg-zinc-800 transition active:scale-95 shadow-sm"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white text-xs font-semibold shadow-sm transition active:scale-95"
           >
             <span>Next Stranger</span>
             <span>⏭</span>
@@ -90,7 +90,7 @@ export default function ChatHeader({
         <button
           type="button"
           onClick={onViewProfile}
-          className="px-2.5 py-1.5 rounded-xl bg-zinc-100 text-zinc-700 text-xs font-medium hover:bg-zinc-200 transition"
+          className="px-2.5 py-1.5 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 hover:text-white text-xs font-medium border border-zinc-700/50 transition"
           title="View Stranger Profile"
         >
           👤 Profile
@@ -102,7 +102,7 @@ export default function ChatHeader({
             <button
               type="button"
               onClick={() => setShowMenu((prev) => !prev)}
-              className="flex h-8 w-8 items-center justify-center rounded-xl bg-zinc-100 text-zinc-600 hover:bg-zinc-200 transition font-bold"
+              className="flex h-8 w-8 items-center justify-center rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-zinc-400 hover:text-white border border-zinc-700/50 transition font-bold"
               title="Safety Options"
             >
               ⋮
@@ -110,14 +110,14 @@ export default function ChatHeader({
 
             {showMenu && (
               <div
-                className="absolute right-0 mt-2 w-44 rounded-2xl bg-white p-1.5 shadow-xl border border-zinc-200 z-30 animate-fadeIn"
+                className="absolute right-0 mt-2 w-44 rounded-2xl bg-zinc-900 p-1.5 shadow-2xl border border-zinc-800 z-30 animate-fadeIn text-zinc-200"
                 onClick={() => setShowMenu(false)}
               >
                 {onReport && (
                   <button
                     type="button"
                     onClick={onReport}
-                    className="w-full text-left px-3 py-2 rounded-xl text-xs font-medium text-amber-700 hover:bg-amber-50 flex items-center gap-2"
+                    className="w-full text-left px-3 py-2 rounded-xl text-xs font-medium text-amber-400 hover:bg-amber-950/40 flex items-center gap-2 transition"
                   >
                     <span>🚩</span> Report Stranger
                   </button>
@@ -126,7 +126,7 @@ export default function ChatHeader({
                   <button
                     type="button"
                     onClick={onBlock}
-                    className="w-full text-left px-3 py-2 rounded-xl text-xs font-medium text-red-600 hover:bg-red-50 flex items-center gap-2"
+                    className="w-full text-left px-3 py-2 rounded-xl text-xs font-medium text-red-400 hover:bg-red-950/40 flex items-center gap-2 transition"
                   >
                     <span>🚫</span> Block Stranger
                   </button>

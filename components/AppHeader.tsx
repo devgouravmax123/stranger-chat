@@ -32,7 +32,7 @@ export default function AppHeader({
 
   return (
     <header className="h-14 border-b border-zinc-800/80 bg-zinc-900/90 backdrop-blur-md px-4 flex items-center justify-between z-30 shrink-0 select-none">
-      {/* Left: Hamburger & New Chat */}
+      {/* Left: Hamburger, Brand & New Chat */}
       <div className="flex items-center gap-3">
         <button
           type="button"
@@ -43,21 +43,23 @@ export default function AppHeader({
           <span className="text-lg leading-none font-mono">☰</span>
         </button>
 
+        <div className="flex items-center gap-2 mr-1">
+          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-tr from-indigo-600 to-purple-600 text-white shadow-sm text-xs font-black">
+            ⚡
+          </div>
+          <span className="text-sm font-bold tracking-tight text-white hidden xs:inline">
+            Chat<span className="text-indigo-400">Buddy</span>
+          </span>
+        </div>
+
         <button
           type="button"
           onClick={onNewChat}
-          className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white text-xs font-semibold shadow-md shadow-indigo-900/30 transition active:scale-95"
+          className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white text-xs font-semibold shadow-md shadow-indigo-900/30 transition active:scale-95"
         >
           <span>✨</span>
           <span className="hidden sm:inline font-bold">New Chat</span>
         </button>
-      </div>
-
-      {/* Center title for mobile */}
-      <div className="flex items-center gap-2 md:hidden">
-        <span className="text-xs font-bold tracking-tight text-white">
-          Chat<span className="text-indigo-400">Buddy</span>
-        </span>
       </div>
 
       {/* Right: Icons (Profile, Notifications, Status) */}

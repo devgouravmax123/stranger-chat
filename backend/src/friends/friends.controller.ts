@@ -6,6 +6,7 @@ import {
   Param,
   Post,
   Put,
+  Query,
 } from '@nestjs/common';
 
 import { FriendsService } from './friends.service.js';
@@ -15,6 +16,19 @@ export class FriendsController {
   constructor(
     private readonly friendsService: FriendsService,
   ) {}
+
+  // ==========================================
+  // SEARCH USERS / POTENTIAL FRIENDS
+  // GET /friends/search?userId=xxx&q=yyy
+  // ==========================================
+
+  @Get('search')
+  async searchUsers(
+    @Query('userId') userId: string,
+    @Query('q') q: string,
+  ) {
+    return this.friendsService.searchUsers(userId, q);
+  }
 
   // ==========================================
   // SEND FRIEND REQUEST

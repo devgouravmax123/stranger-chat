@@ -220,182 +220,143 @@ export default function ProfileSetup({
   // ==========================================
 
   return (
-    <div className="w-full max-w-md bg-white rounded-2xl p-8 shadow-xl">
-
+    <div className="w-full max-w-md bg-zinc-900/90 backdrop-blur-md border border-zinc-800/90 rounded-3xl p-6 sm:p-8 shadow-2xl text-zinc-100 animate-fadeIn">
       {/* ====================================== */}
-      {/* HEADER */}
+      {/* BRAND & HEADER */}
       {/* ====================================== */}
-
-      <h1 className="text-2xl font-bold text-zinc-900 text-center">
-        Create Your Profile
-      </h1>
-
-      <p className="text-zinc-500 mt-2 text-center">
-        Tell us a little about yourself.
-      </p>
-
-      {/* ====================================== */}
-      {/* USERNAME */}
-      {/* ====================================== */}
-
-      <div className="mt-6">
-
-        <label className="block text-sm font-medium text-zinc-700 mb-2">
-          Username
-        </label>
-
-        <input
-          type="text"
-          value={username}
-          onChange={(event) =>
-            setUsername(
-              event.target.value,
-            )
-          }
-          placeholder="Enter your username"
-          maxLength={20}
-          disabled={saving}
-          className="w-full border border-zinc-300 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-zinc-400 disabled:bg-zinc-100"
-        />
-
+      <div className="text-center">
+        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-tr from-indigo-600 to-violet-500 text-white text-xl font-bold shadow-lg shadow-indigo-600/30 mx-auto">
+          ⚡
+        </div>
+        <h1 className="text-xl font-bold text-white mt-3.5 tracking-tight">
+          Chat<span className="text-indigo-400">Buddy</span>
+        </h1>
+        <h2 className="text-base font-semibold text-zinc-200 mt-1">
+          Create Your Profile
+        </h2>
         <p className="text-xs text-zinc-400 mt-1">
-          3–20 characters
+          Choose an avatar and handle to start chatting.
         </p>
-
       </div>
 
       {/* ====================================== */}
-      {/* AGE */}
+      {/* AVATAR SELECTOR */}
       {/* ====================================== */}
-
       <div className="mt-5">
-
-        <label className="block text-sm font-medium text-zinc-700 mb-2">
-          Age
-        </label>
-
-        <input
-          type="number"
-          value={age}
-          onChange={(event) =>
-            setAge(
-              event.target.value,
-            )
-          }
-          placeholder="Enter your age"
-          min={13}
-          max={100}
-          disabled={saving}
-          className="w-full border border-zinc-300 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-zinc-400 disabled:bg-zinc-100"
-        />
-
-      </div>
-
-      {/* ====================================== */}
-      {/* GENDER */}
-      {/* ====================================== */}
-
-      <div className="mt-5">
-
-        <label className="block text-sm font-medium text-zinc-700 mb-2">
-          Gender
-        </label>
-
-        <select
-          value={gender}
-          onChange={(event) =>
-            setGender(
-              event.target.value,
-            )
-          }
-          disabled={saving}
-          className="w-full border border-zinc-300 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-zinc-400 disabled:bg-zinc-100"
-        >
-          <option value="">
-            Select gender
-          </option>
-
-          <option value="male">
-            Male
-          </option>
-
-          <option value="female">
-            Female
-          </option>
-
-          <option value="non-binary">
-            Non-binary
-          </option>
-
-          <option value="prefer-not-to-say">
-            Prefer not to say
-          </option>
-        </select>
-
-      </div>
-
-      {/* ====================================== */}
-      {/* AVATAR */}
-      {/* ====================================== */}
-
-      <div className="mt-6">
-
-        <label className="block text-sm font-medium text-zinc-700 mb-3">
+        <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2.5 text-center">
           Choose your avatar
         </label>
 
-        <div className="flex justify-center gap-3 flex-wrap">
-
+        <div className="flex justify-center gap-2.5 flex-wrap">
           {avatars.map((item) => (
             <button
               key={item}
               type="button"
-              onClick={() =>
-                setAvatar(item)
-              }
+              onClick={() => setAvatar(item)}
               disabled={saving}
-              className={`w-14 h-14 rounded-full text-3xl border-2 transition ${
+              className={`w-12 h-12 rounded-2xl text-2xl flex items-center justify-center transition ${
                 avatar === item
-                  ? "border-zinc-900 bg-zinc-100 scale-110"
-                  : "border-zinc-200 hover:border-zinc-400"
+                  ? "border-2 border-indigo-500 bg-indigo-600/20 scale-110 shadow-md shadow-indigo-500/30"
+                  : "border border-zinc-800 bg-zinc-950/70 hover:border-zinc-700 opacity-80 hover:opacity-100"
               } disabled:opacity-50`}
+              title={`Choose ${item}`}
             >
               {item}
             </button>
           ))}
-
         </div>
-
       </div>
 
       {/* ====================================== */}
-      {/* ERROR */}
+      {/* USERNAME */}
       {/* ====================================== */}
+      <div className="mt-5">
+        <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">
+          Username
+        </label>
+        <input
+          type="text"
+          value={username}
+          onChange={(event) => setUsername(event.target.value)}
+          placeholder="e.g. Alex_Code"
+          maxLength={20}
+          disabled={saving}
+          className="w-full rounded-xl bg-zinc-950 border border-zinc-700/80 px-4 py-3 text-sm text-white placeholder-zinc-500 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition disabled:opacity-50"
+        />
+        <p className="text-[11px] text-zinc-500 mt-1">
+          3–20 characters, letters and numbers
+        </p>
+      </div>
 
+      {/* ====================================== */}
+      {/* AGE & GENDER GRID */}
+      {/* ====================================== */}
+      <div className="grid grid-cols-2 gap-3 mt-4">
+        <div>
+          <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">
+            Age
+          </label>
+          <input
+            type="number"
+            value={age}
+            onChange={(event) => setAge(event.target.value)}
+            placeholder="18"
+            min={13}
+            max={100}
+            disabled={saving}
+            className="w-full rounded-xl bg-zinc-950 border border-zinc-700/80 px-4 py-3 text-sm text-white placeholder-zinc-500 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition disabled:opacity-50"
+          />
+        </div>
+
+        <div>
+          <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">
+            Gender
+          </label>
+          <select
+            value={gender}
+            onChange={(event) => setGender(event.target.value)}
+            disabled={saving}
+            className="w-full rounded-xl bg-zinc-950 border border-zinc-700/80 px-3 py-3 text-sm text-white outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition disabled:opacity-50"
+          >
+            <option value="" className="bg-zinc-900 text-zinc-400">Select...</option>
+            <option value="male" className="bg-zinc-900 text-white">Male</option>
+            <option value="female" className="bg-zinc-900 text-white">Female</option>
+            <option value="non-binary" className="bg-zinc-900 text-white">Non-binary</option>
+            <option value="prefer-not-to-say" className="bg-zinc-900 text-white">Prefer not to say</option>
+          </select>
+        </div>
+      </div>
+
+      {/* ====================================== */}
+      {/* ERROR MESSAGE */}
+      {/* ====================================== */}
       {error && (
-        <div className="mt-5 rounded-xl bg-red-50 border border-red-200 px-4 py-3">
-
-          <p className="text-sm text-red-600 text-center">
+        <div className="mt-4 rounded-xl bg-red-950/60 border border-red-800/80 px-4 py-2.5 flex items-center justify-center gap-2">
+          <span>⚠️</span>
+          <p className="text-xs text-red-300 font-medium">
             {error}
           </p>
-
         </div>
       )}
 
       {/* ====================================== */}
-      {/* CONTINUE */}
+      {/* SUBMIT BUTTON */}
       {/* ====================================== */}
-
       <button
+        type="button"
         onClick={handleSubmit}
         disabled={saving}
-        className="mt-7 w-full bg-zinc-900 text-white px-6 py-3 rounded-xl font-medium hover:bg-zinc-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+        className="mt-6 w-full bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white px-6 py-3.5 rounded-xl font-bold text-sm transition shadow-lg shadow-indigo-600/30 disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.99] flex items-center justify-center gap-2"
       >
-        {saving
-          ? "Saving profile..."
-          : "Continue"}
+        {saving ? (
+          <>
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+            <span>Creating profile...</span>
+          </>
+        ) : (
+          <span>Enter ChatBuddy ⚡</span>
+        )}
       </button>
-
     </div>
   );
 }

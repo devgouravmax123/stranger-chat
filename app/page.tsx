@@ -14,6 +14,8 @@ import AppSidebar, { SidebarTab } from "@/components/AppSidebar";
 import EditProfileModal, { UserProfile } from "@/components/EditProfileModal";
 import { AppNotification } from "@/components/NotificationDropdown";
 import AiSuggestions from "@/components/AiSuggestions";
+import GalaxyBackground from "@/components/GalaxyBackground";
+import SearchFriendsView from "@/components/SearchFriendsView";
 
 // ==========================================
 // NAVIGATION & VIEW TYPES
@@ -24,6 +26,7 @@ export type AppView =
   | "matching"
   | "stranger-chat"
   | "friends"
+  | "search-friends"
   | "friend-chat";
 
 type MatchPreferences = {
@@ -54,6 +57,7 @@ type Friend = {
   gender: string | null;
   avatar: string | null;
   lastSeenAt?: string | null;
+  isOnline?: boolean;
 };
 
 type Friendship = {
@@ -94,6 +98,21 @@ type FriendRoomOpenedData = {
 };
 
 
+function formatLastSeen(timestamp: string): string {
+  try {
+    const d = new Date(timestamp);
+    const diffMs = Date.now() - d.getTime();
+    if (diffMs < 60000) return "just now";
+    const diffMin = Math.floor(diffMs / 60000);
+    if (diffMin < 60) return `${diffMin}m ago`;
+    const diffHours = Math.floor(diffMin / 60);
+    if (diffHours < 24) return `${diffHours}h ago`;
+    return d.toLocaleDateString();
+  } catch {
+    return "recently";
+  }
+}
+
 export default function Home() {
   // ==========================================
   // CORE STATE
@@ -102,6 +121,7 @@ export default function Home() {
   const [socket, setSocket] = useState<Socket | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const userIdRef = useRef<string | null>(null);
+  const [sessionKey, setSessionKey] = useState(0);
 
   const [currentView, setCurrentView] = useState<AppView>("profile-setup");
   const [profileCompleted, setProfileCompleted] = useState(false);
@@ -189,6 +209,9 @@ export default function Home() {
 
   const friendChatIdRef = useRef<string | null>(null);
   friendChatIdRef.current = friendChatId;
+
+  const strangerRoomIdRef = useRef<string | null>(null);
+  strangerRoomIdRef.current = strangerRoomId;
 
   // ==========================================
   // NOTIFICATION BANNER
@@ -371,7 +394,45 @@ export default function Home() {
           reactions: item.reactions || [],
         }));
         setMessages(history);
+
+        const unreadStranger = history
+          .filter((m) => m.sender === "stranger" && m.id && m.status !== "seen")
+          .map((m) => m.id as string);
+        if (unreadStranger.length > 0) {
+          newSocket.emit("mark_seen", {
+            roomId: strangerRoomIdRef.current || undefined,
+            messageIds: unreadStranger,
+          });
+        }
       }
+    });
+
+    newSocket.on("friend_status_changed", (data: { userId: string; isOnline: boolean; lastSeenAt?: string }) => {
+      setFriends((prev) =>
+        prev.map((f) => {
+          if (f.friend?.id === data.userId) {
+            return {
+              ...f,
+              friend: {
+                ...f.friend,
+                isOnline: data.isOnline,
+                lastSeenAt: data.lastSeenAt || f.friend.lastSeenAt,
+              },
+            };
+          }
+          return f;
+        })
+      );
+      setSelectedFriend((prev) => {
+        if (prev && prev.id === data.userId) {
+          return {
+            ...prev,
+            isOnline: data.isOnline,
+            lastSeenAt: data.lastSeenAt || prev.lastSeenAt,
+          };
+        }
+        return prev;
+      });
     });
 
     newSocket.on("stranger_online", () => {
@@ -481,11 +542,14 @@ export default function Home() {
         setMessages((prev) => [...prev, newMsg]);
 
         // Acknowledge seen if active in stranger-chat
-        newSocket.emit("mark_seen", { messageIds: [data.id] });
+        newSocket.emit("mark_seen", {
+          roomId: strangerRoomIdRef.current || undefined,
+          messageIds: [data.id],
+        });
       }
     );
 
-    newSocket.on("message_seen", (data: { chatId: string; messageIds?: string[] }) => {
+    newSocket.on("message_seen", (data: { chatId?: string; messageIds?: string[] }) => {
       // Update stranger chat messages
       setMessages((prev) =>
         prev.map((msg) => {
@@ -736,7 +800,7 @@ export default function Home() {
     return () => {
       newSocket.disconnect();
     };
-  }, [navigateTo, showNotification]);
+  }, [navigateTo, showNotification, sessionKey]);
 
   // ==========================================
   // MATCHMAKING & STRANGER CHAT ACTIONS
@@ -1308,13 +1372,75 @@ export default function Home() {
   };
 
   // ==========================================
+  // ACCOUNT DELETION & LOGOUT
+  // ==========================================
+
+  const handleDeleteAccount = async () => {
+    if (!userId) return;
+    try {
+      const res = await fetch(`http://localhost:3001/users/${userId}/account`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.message || "Failed to delete account");
+      }
+
+      // Disconnect socket cleanly
+      if (socket) {
+        socket.disconnect();
+      }
+
+      // Wipe all user-specific local and session storage
+      if (typeof window !== "undefined") {
+        sessionStorage.removeItem("sc_user_id");
+        sessionStorage.removeItem("sc_session_user_id");
+        localStorage.removeItem("sc_user_id");
+        localStorage.removeItem("sc_session_user_id");
+      }
+
+      // Clear all frontend state
+      setUserId(null);
+      userIdRef.current = null;
+      setCurrentUserProfile(null);
+      setFriends([]);
+      setFriendRequests([]);
+      setNotifications([]);
+      setUnreadNotificationsCount(0);
+      setMessages([]);
+      setFriendMessages([]);
+      setSelectedFriend(null);
+      setFriendRoomId(null);
+      setFriendChatId(null);
+      setStrangerRoomId(null);
+      setStrangerUserId(null);
+      setMatchScore(null);
+      setStrangerStatus("connecting");
+      setWaiting(false);
+      setProfileCompleted(false);
+      setCheckingProfile(true);
+      setCurrentView("profile-setup");
+      setIsSidebarOpen(false);
+
+      // Trigger socket re-initialization to obtain a brand new valid user identity
+      setSessionKey((prev) => prev + 1);
+
+      showNotification("Account permanently deleted. You can create a new profile.");
+    } catch (err: any) {
+      console.error("Account deletion failed:", err);
+      showNotification("Failed to delete account. Please try again.");
+    }
+  };
+
+  // ==========================================
   // RENDER: LOADING CONNECTION
   // ==========================================
 
   if (!userId || checkingProfile) {
     return (
-      <main className="min-h-screen bg-zinc-950 flex items-center justify-center p-4">
-        <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl p-8 shadow-2xl text-center">
+      <main className="min-h-screen relative flex items-center justify-center p-4 bg-[#030308] overflow-hidden">
+        <GalaxyBackground />
+        <div className="relative z-10 w-full max-w-md bg-zinc-900/90 backdrop-blur-md border border-zinc-800 rounded-3xl p-8 shadow-2xl text-center">
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 mx-auto text-xl font-bold shadow-lg shadow-indigo-600/20">
             ⚡
           </div>
@@ -1336,24 +1462,27 @@ export default function Home() {
 
   if (!profileCompleted) {
     return (
-      <main className="min-h-screen bg-zinc-950 flex items-center justify-center p-4">
-        <ProfileSetup
-          userId={userId}
-          onComplete={(savedProfile) => {
-            setCurrentUserProfile((prev) => ({
-              id: userId,
-              username: savedProfile.username,
-              age: savedProfile.age,
-              gender: savedProfile.gender,
-              avatar: savedProfile.avatar,
-              language: prev?.language || language,
-              interests: prev?.interests || interests,
-              goal: prev?.goal || goal,
-            }));
-            setProfileCompleted(true);
-            navigateTo("matching");
-          }}
-        />
+      <main className="min-h-screen relative flex items-center justify-center p-4 bg-[#030308] overflow-hidden">
+        <GalaxyBackground />
+        <div className="relative z-10 w-full flex justify-center">
+          <ProfileSetup
+            userId={userId}
+            onComplete={(savedProfile) => {
+              setCurrentUserProfile((prev) => ({
+                id: userId,
+                username: savedProfile.username,
+                age: savedProfile.age,
+                gender: savedProfile.gender,
+                avatar: savedProfile.avatar,
+                language: prev?.language || language,
+                interests: prev?.interests || interests,
+                goal: prev?.goal || goal,
+              }));
+              setProfileCompleted(true);
+              navigateTo("matching");
+            }}
+          />
+        </div>
       </main>
     );
   }
@@ -1383,39 +1512,52 @@ export default function Home() {
   // ==========================================
 
   return (
-    <div className="min-h-screen h-screen flex flex-col bg-zinc-950 text-zinc-100 overflow-hidden">
+    <div className="min-h-screen h-screen flex flex-col relative text-zinc-100 overflow-hidden bg-[#030308]">
+      {/* Background galaxy layer */}
+      <GalaxyBackground />
+
       {notificationBanner}
 
       {/* TOP APPLICATION HEADER (☰ Hamburger, Brand, New Chat, Profile, Notifications, Online status) */}
-      <AppHeader
-        onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
-        onNewChat={() => {
-          if (currentView === "stranger-chat") {
-            handleNextStranger();
-          } else {
-            navigateTo("matching");
-          }
-        }}
-        onOpenProfile={() => setIsEditProfileOpen(true)}
-        currentUsername={currentUserProfile?.username}
-        currentAvatar={currentUserProfile?.avatar}
-        unreadNotificationsCount={unreadNotificationsCount}
-        notifications={notifications}
-        onMarkNotificationAsRead={markNotificationAsRead}
-        onMarkAllNotificationsAsRead={markAllNotificationsAsRead}
-        onSelectNotification={handleSelectNotification}
-      />
+      <div className="relative z-20">
+        <AppHeader
+          onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
+          onNewChat={() => {
+            if (currentView === "stranger-chat") {
+              handleNextStranger();
+            } else {
+              navigateTo("matching");
+            }
+          }}
+          onOpenProfile={() => setIsEditProfileOpen(true)}
+          currentUsername={currentUserProfile?.username}
+          currentAvatar={currentUserProfile?.avatar}
+          unreadNotificationsCount={unreadNotificationsCount}
+          notifications={notifications}
+          onMarkNotificationAsRead={markNotificationAsRead}
+          onMarkAllNotificationsAsRead={markAllNotificationsAsRead}
+          onSelectNotification={handleSelectNotification}
+        />
+      </div>
 
       {/* MAIN BODY: SIDEBAR + RIGHT WORKSPACE */}
-      <div className="flex-1 flex overflow-hidden relative">
+      <div className="flex-1 flex overflow-hidden relative z-10">
         {/* LEFT NAVIGATION SIDEBAR */}
         <AppSidebar
           isOpen={isSidebarOpen}
           onClose={() => setIsSidebarOpen(false)}
-          activeTab={currentView === "friends" || currentView === "friend-chat" ? "friends" : "chat"}
+          activeTab={
+            currentView === "search-friends"
+              ? "search-friends"
+              : currentView === "friends" || currentView === "friend-chat"
+              ? "friends"
+              : "chat"
+          }
           onSelectTab={(tab) => {
             if (tab === "friends") {
               openFriends();
+            } else if (tab === "search-friends") {
+              navigateTo("search-friends");
             } else {
               if (currentView !== "stranger-chat") {
                 navigateTo("matching");
@@ -1436,82 +1578,98 @@ export default function Home() {
           pendingRequestsCount={friendRequests.length}
           searchQuery={searchQuery}
           onSearchQueryChange={setSearchQuery}
+          onDeleteAccount={handleDeleteAccount}
         />
 
         {/* RIGHT WORKSPACE AREA */}
-        <main className="flex-1 flex flex-col min-w-0 bg-zinc-950 overflow-y-auto relative">
+        <main className="flex-1 flex flex-col min-w-0 bg-transparent overflow-y-auto relative">
           {/* VIEW: PRIVATE FRIEND CHAT */}
           {currentView === "friend-chat" && (
-            <div className="flex-1 flex flex-col items-center justify-center p-2 sm:p-4 h-full">
-              <div className="w-full max-w-2xl h-[94%] bg-white rounded-3xl overflow-hidden flex flex-col shadow-2xl border border-zinc-200/80">
-                {/* Header */}
-                <div className="flex items-center gap-3 px-5 py-3.5 border-b bg-zinc-50/70">
-                  <button
-                    onClick={closeFriendChat}
-                    className="px-3 py-1.5 rounded-xl bg-white border border-zinc-200 text-zinc-800 text-xs font-semibold hover:bg-zinc-100 transition shadow-xs"
-                  >
-                    ← Back to Friends
-                  </button>
+            <div className="flex-1 flex flex-col h-full w-full max-w-5xl mx-auto bg-zinc-900/95 backdrop-blur-md border-x border-zinc-800/80 shadow-2xl overflow-hidden">
+              {/* Header */}
+              <div className="flex items-center gap-3 px-4 sm:px-6 py-3 border-b border-zinc-800/90 bg-zinc-900/95 backdrop-blur-md shrink-0">
+                <button
+                  onClick={closeFriendChat}
+                  className="px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white border border-zinc-700/60 text-xs font-semibold transition shadow-xs flex items-center gap-1.5 active:scale-95"
+                >
+                  <span>←</span>
+                  <span className="hidden xs:inline">Back to Friends</span>
+                </button>
 
-                  <div className="flex-1 min-w-0">
-                    <h1 className="font-bold text-zinc-900 text-sm truncate flex items-center gap-1.5">
-                      {selectedFriend?.avatar && <span>{selectedFriend.avatar}</span>}
-                      <span>{selectedFriend?.username || "Friend"}</span>
-                    </h1>
-                    <p className="text-[11px] text-zinc-500">Private 1-to-1 conversation</p>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => openUserProfile(selectedFriend?.id || null)}
-                    disabled={!selectedFriend?.id}
-                    className="px-3 py-1.5 rounded-xl bg-zinc-100 text-zinc-700 text-xs font-medium hover:bg-zinc-200 transition disabled:opacity-50"
-                  >
-                    👤 Profile
-                  </button>
+                <div className="flex-1 min-w-0">
+                  <h1 className="font-bold text-white text-sm truncate flex items-center gap-1.5">
+                    {selectedFriend?.avatar && <span>{selectedFriend.avatar}</span>}
+                    <span>{selectedFriend?.username || "Friend"}</span>
+                  </h1>
+                  {selectedFriend?.isOnline ? (
+                    <div className="flex items-center gap-1.5 text-[11px] font-medium text-emerald-400">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse inline-block" />
+                      <span>Online</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1.5 text-[11px] text-zinc-400">
+                      <span className="w-2 h-2 rounded-full bg-zinc-600 inline-block" />
+                      <span>
+                        Offline
+                        {selectedFriend?.lastSeenAt
+                          ? ` • Last seen ${formatLastSeen(selectedFriend.lastSeenAt)}`
+                          : ""}
+                      </span>
+                    </div>
+                  )}
                 </div>
 
-                {friendChatLoading ? (
-                  <div className="flex-1 flex items-center justify-center">
-                    <div className="text-center">
-                      <div className="animate-spin h-7 w-7 border-3 border-zinc-300 border-t-zinc-900 rounded-full mx-auto" />
-                      <p className="mt-3 text-xs text-zinc-500">Opening private chat...</p>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <MessageList
-                      messages={friendMessages}
-                      currentUserId={userId}
-                      onToggleReaction={handleToggleFriendReaction}
-                      onDeleteMessage={handleDeleteFriendMessage}
-                      onReplyMessage={(msg) => setFriendReplyingTo(msg)}
-                    />
-                    <AiSuggestions
-                      conversationId={friendRoomId || friendChatId || selectedFriend?.id}
-                      messages={friendMessages}
-                      currentUserId={userId}
-                      onSelectSuggestion={(text) => setFriendMessage(text)}
-                    />
-                    <MessageInput
-                      message={friendMessage}
-                      setMessage={setFriendMessage}
-                      sendMessage={sendFriendMessage}
-                      onVoiceRecorded={sendFriendVoice}
-                      onImageSelected={sendFriendImage}
-                      replyingTo={friendReplyingTo}
-                      onCancelReply={() => setFriendReplyingTo(null)}
-                    />
-                  </>
-                )}
+                <button
+                  type="button"
+                  onClick={() => openUserProfile(selectedFriend?.id || null)}
+                  disabled={!selectedFriend?.id}
+                  className="px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-700/60 text-zinc-200 hover:text-white text-xs font-medium transition disabled:opacity-50 flex items-center gap-1"
+                >
+                  <span>👤</span>
+                  <span className="hidden sm:inline">Profile</span>
+                </button>
               </div>
+
+              {friendChatLoading ? (
+                <div className="flex-1 flex items-center justify-center bg-zinc-950">
+                  <div className="text-center">
+                    <div className="animate-spin h-7 w-7 border-2 border-indigo-500/30 border-t-indigo-500 rounded-full mx-auto" />
+                    <p className="mt-3 text-xs text-zinc-400">Opening private chat...</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex-1 flex flex-col min-h-0 bg-zinc-950">
+                  <MessageList
+                    messages={friendMessages}
+                    currentUserId={userId}
+                    onToggleReaction={handleToggleFriendReaction}
+                    onDeleteMessage={handleDeleteFriendMessage}
+                    onReplyMessage={(msg) => setFriendReplyingTo(msg)}
+                  />
+                  <AiSuggestions
+                    conversationId={friendRoomId || friendChatId || selectedFriend?.id}
+                    messages={friendMessages}
+                    currentUserId={userId}
+                    onSelectSuggestion={(text) => setFriendMessage(text)}
+                  />
+                  <MessageInput
+                    message={friendMessage}
+                    setMessage={setFriendMessage}
+                    sendMessage={sendFriendMessage}
+                    onVoiceRecorded={sendFriendVoice}
+                    onImageSelected={sendFriendImage}
+                    replyingTo={friendReplyingTo}
+                    onCancelReply={() => setFriendReplyingTo(null)}
+                  />
+                </div>
+              )}
             </div>
           )}
 
           {/* VIEW: FRIENDS PANEL */}
           {currentView === "friends" && (
-            <div className="flex-1 flex flex-col items-center justify-center p-3 sm:p-6 overflow-y-auto">
-              <div className="w-full max-w-2xl bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl">
+            <div className="flex-1 w-full max-w-4xl mx-auto p-4 sm:p-6 overflow-y-auto">
+              <div className="w-full bg-zinc-900/90 backdrop-blur-md border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl">
                 <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 bg-zinc-950/50">
                   <div>
                     <h1 className="text-lg font-bold text-white">Friends & Connections</h1>
@@ -1528,7 +1686,7 @@ export default function Home() {
                   </button>
                 </div>
 
-                <div className="p-6 max-h-[550px] overflow-y-auto space-y-6">
+                <div className="p-6 space-y-6">
                   {friendsError && (
                     <div className="rounded-2xl bg-red-950/60 border border-red-800/80 text-red-300 px-4 py-2.5 text-xs">
                       {friendsError}
@@ -1605,14 +1763,32 @@ export default function Home() {
                             className="border border-zinc-800 rounded-2xl p-3 bg-zinc-950/40 flex items-center justify-between gap-3 hover:border-zinc-700 transition"
                           >
                             <div className="flex items-center gap-2.5">
-                              <span className="text-2xl">{item.friend.avatar || "👤"}</span>
+                              <div className="relative">
+                                <span className="text-2xl">{item.friend.avatar || "👤"}</span>
+                                <span
+                                  className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-zinc-950 ${
+                                    item.friend.isOnline ? "bg-emerald-500" : "bg-zinc-600"
+                                  }`}
+                                />
+                              </div>
                               <div>
-                                <p className="text-xs font-bold text-white">
-                                  {item.friend.username || "Anonymous"}
+                                <p className="text-xs font-bold text-white flex items-center gap-1.5">
+                                  <span>{item.friend.username || "Anonymous"}</span>
+                                  {item.friend.isOnline && (
+                                    <span className="text-[10px] font-normal text-emerald-400">Online</span>
+                                  )}
                                 </p>
-                                {item.friend.age && (
-                                  <p className="text-[11px] text-zinc-500">Age: {item.friend.age}</p>
-                                )}
+                                <p className="text-[11px] text-zinc-500">
+                                  {item.friend.isOnline
+                                    ? item.friend.age
+                                      ? `Age: ${item.friend.age}`
+                                      : "Active now"
+                                    : item.friend.lastSeenAt
+                                    ? `Last seen ${formatLastSeen(item.friend.lastSeenAt)}`
+                                    : item.friend.age
+                                    ? `Age: ${item.friend.age}`
+                                    : "Offline"}
+                                </p>
                               </div>
                             </div>
                             <div className="flex gap-2">
@@ -1640,46 +1816,80 @@ export default function Home() {
             </div>
           )}
 
+          {/* VIEW: SEARCH FRIENDS DIRECTORY */}
+          {currentView === "search-friends" && (
+            <SearchFriendsView
+              currentUserId={userId || ""}
+              onBack={() => navigateTo("friends")}
+              onOpenProfile={(targetUserId) => openUserProfile(targetUserId)}
+              onOpenPrivateChat={(friendData) => {
+                const targetFriendship = friends.find(
+                  (f) => f.friend.id === friendData.id
+                );
+                if (targetFriendship) {
+                  openFriendChat(targetFriendship);
+                } else {
+                  openFriendChat({
+                    friendshipId: `temp-${friendData.id}`,
+                    createdAt: new Date().toISOString(),
+                    friend: {
+                      id: friendData.id,
+                      username: friendData.username,
+                      avatar: friendData.avatar,
+                      age: null,
+                      gender: null,
+                      isOnline: friendData.isOnline,
+                      lastSeenAt: friendData.lastSeenAt,
+                    },
+                  });
+                }
+              }}
+              onAcceptRequest={acceptFriendRequest}
+              showNotification={showNotification}
+            />
+          )}
+
           {/* VIEW: ACTIVE STRANGER CHAT */}
           {currentView === "stranger-chat" && (
-            <div className="flex-1 flex flex-col items-center justify-center p-2 sm:p-4 h-full">
-              <div className="w-full max-w-2xl h-[96%] bg-white rounded-3xl overflow-hidden flex flex-col shadow-2xl border border-zinc-200/80">
-                <ChatHeader
-                  onViewProfile={() => openUserProfile(strangerUserId)}
-                  onBack={handleExitStrangerChat}
-                  onSkip={handleNextStranger}
-                  onReport={() => setIsReportOpen(true)}
-                  onBlock={handleBlockStranger}
-                  status={strangerStatus}
-                  onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
-                />
+            <div className="flex-1 flex flex-col h-full w-full max-w-5xl mx-auto bg-zinc-900 border-x border-zinc-800/80 shadow-2xl overflow-hidden">
+              <ChatHeader
+                onViewProfile={() => openUserProfile(strangerUserId)}
+                onBack={handleExitStrangerChat}
+                onSkip={handleNextStranger}
+                onReport={() => setIsReportOpen(true)}
+                onBlock={handleBlockStranger}
+                status={strangerStatus}
+                onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
+              />
 
-                {/* Compatibility score */}
-                {matchScore !== null && (
-                  <div className="text-center py-1.5 bg-zinc-50 text-xs font-semibold text-zinc-600 border-b border-zinc-100">
-                    Match compatibility:{" "}
-                    <span className="text-zinc-900 font-bold">{matchScore.toFixed(0)}%</span>
+              {/* Compatibility score */}
+              {matchScore !== null && (
+                <div className="text-center py-1.5 bg-zinc-950/80 text-xs font-semibold text-zinc-400 border-b border-zinc-800/80">
+                  Match compatibility:{" "}
+                  <span className="text-indigo-400 font-bold">{matchScore.toFixed(0)}%</span>
+                </div>
+              )}
+
+              {/* Add Friend Banner */}
+              <div className="px-4 py-2 border-b border-zinc-800/80 bg-zinc-950/60 flex items-center justify-between shrink-0">
+                {!friendRequestSent ? (
+                  <button
+                    onClick={sendFriendRequest}
+                    disabled={!strangerUserId}
+                    className="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-1.5 rounded-xl text-xs font-semibold transition disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed shadow-xs flex items-center justify-center gap-1.5"
+                  >
+                    <span>👥</span>
+                    <span>Add Stranger as Friend</span>
+                  </button>
+                ) : (
+                  <div className="w-full text-center bg-emerald-950/50 border border-emerald-800/60 text-emerald-300 py-1.5 rounded-xl text-xs font-semibold">
+                    ✓ Friend request sent
                   </div>
                 )}
+              </div>
 
-                {/* Add Friend Banner */}
-                <div className="px-4 py-2 border-b border-zinc-100 bg-zinc-50/50 flex items-center justify-between">
-                  {!friendRequestSent ? (
-                    <button
-                      onClick={sendFriendRequest}
-                      disabled={!strangerUserId}
-                      className="w-full bg-indigo-600 text-white py-1.5 rounded-xl text-xs font-semibold hover:bg-indigo-700 transition disabled:bg-zinc-300 disabled:cursor-not-allowed shadow-xs"
-                    >
-                      👥 Add Stranger as Friend
-                    </button>
-                  ) : (
-                    <div className="w-full text-center bg-emerald-50 text-emerald-700 py-1.5 rounded-xl text-xs font-semibold">
-                      ✓ Friend request sent
-                    </div>
-                  )}
-                </div>
-
-                {/* Message List with Delivery, Reactions, Replies, Soft-Delete */}
+              {/* Message List with Delivery, Reactions, Replies, Soft-Delete */}
+              <div className="flex-1 flex flex-col min-h-0 bg-zinc-950">
                 <MessageList
                   messages={messages}
                   onToggleReaction={handleToggleReaction}
@@ -1689,8 +1899,8 @@ export default function Home() {
 
                 {/* Real-time typing indicator */}
                 {strangerTyping && (
-                  <div className="px-6 py-1.5 text-xs text-zinc-400 animate-pulse bg-white flex items-center gap-1.5">
-                    <span className="h-1.5 w-1.5 rounded-full bg-zinc-400 animate-ping" />
+                  <div className="px-6 py-1.5 text-xs text-zinc-400 animate-pulse bg-zinc-950 flex items-center gap-1.5 border-t border-zinc-900">
+                    <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 animate-ping" />
                     Stranger is typing...
                   </div>
                 )}
@@ -1717,24 +1927,24 @@ export default function Home() {
                   onTypingStop={handleTypingStop}
                   disabled={strangerStatus === "disconnected"}
                 />
+              </div>
 
-                {/* Action Footer: Next Stranger & End Chat */}
-                <div className="grid grid-cols-2 border-t divide-x divide-zinc-200">
-                  <button
-                    onClick={handleNextStranger}
-                    className="py-3 text-xs sm:text-sm font-semibold text-indigo-600 hover:bg-indigo-50 transition flex items-center justify-center gap-1.5"
-                  >
-                    <span>⏭️</span>
-                    <span>Next Stranger</span>
-                  </button>
-                  <button
-                    onClick={handleExitStrangerChat}
-                    className="py-3 text-xs sm:text-sm font-semibold text-rose-600 hover:bg-rose-50 transition flex items-center justify-center gap-1.5"
-                  >
-                    <span>✕</span>
-                    <span>End Chat</span>
-                  </button>
-                </div>
+              {/* Action Footer: Next Stranger & End Chat */}
+              <div className="grid grid-cols-2 border-t border-zinc-800/90 divide-x divide-zinc-800/90 bg-zinc-900 shrink-0">
+                <button
+                  onClick={handleNextStranger}
+                  className="py-3 text-xs sm:text-sm font-semibold text-indigo-400 hover:bg-zinc-800 transition flex items-center justify-center gap-1.5"
+                >
+                  <span>⏭️</span>
+                  <span>Next Stranger</span>
+                </button>
+                <button
+                  onClick={handleExitStrangerChat}
+                  className="py-3 text-xs sm:text-sm font-semibold text-rose-400 hover:bg-zinc-800 transition flex items-center justify-center gap-1.5"
+                >
+                  <span>✕</span>
+                  <span>End Chat</span>
+                </button>
               </div>
             </div>
           )}
@@ -1742,7 +1952,7 @@ export default function Home() {
           {/* VIEW: MAIN MATCHING SETUP SCREEN */}
           {currentView === "matching" && (
             <div className="flex-1 flex flex-col items-center justify-center p-4 sm:p-8">
-              <div className="w-full max-w-lg bg-zinc-900 border border-zinc-800 rounded-3xl p-6 sm:p-8 shadow-2xl text-zinc-100">
+              <div className="w-full max-w-lg bg-zinc-900/90 backdrop-blur-md border border-zinc-800/90 rounded-3xl p-6 sm:p-8 shadow-2xl text-zinc-100">
                 <div className="flex items-center justify-center gap-2 mb-2">
                   <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-indigo-600 text-white text-xl font-bold shadow-lg shadow-indigo-600/30">
                     ⚡

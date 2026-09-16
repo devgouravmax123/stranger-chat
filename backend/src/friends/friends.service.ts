@@ -9,10 +9,16 @@ import { NotificationsService } from '../notifications/notifications.service.js'
 
 @Injectable()
 export class FriendsService {
+  private presenceChecker?: (userId: string) => Promise<boolean> | boolean;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
   ) {}
+
+  registerPresenceChecker(checker: (userId: string) => Promise<boolean> | boolean) {
+    this.presenceChecker = checker;
+  }
 
   // ==========================================
   // SEND FRIEND REQUEST
@@ -379,19 +385,31 @@ export class FriendsService {
       },
     });
 
-    return friendships.map((friendship) => {
-      const friend =
-        friendship.userAId === userId
-          ? friendship.userB
-          : friendship.userA;
+    return Promise.all(
+      friendships.map(async (friendship) => {
+        const friend =
+          friendship.userAId === userId
+            ? friendship.userB
+            : friendship.userA;
 
-      return {
-        friendshipId: friendship.id,
-        createdAt: friendship.createdAt,
-        chatId: friendship.chatId,
-        friend,
-      };
-    });
+        let isOnline = false;
+        if (this.presenceChecker) {
+          try {
+            isOnline = await this.presenceChecker(friend.id);
+          } catch {}
+        }
+
+        return {
+          friendshipId: friendship.id,
+          createdAt: friendship.createdAt,
+          chatId: friendship.chatId,
+          friend: {
+            ...friend,
+            isOnline,
+          },
+        };
+      }),
+    );
   }
 
   // ==========================================
@@ -530,5 +548,151 @@ export class FriendsService {
     return {
       message: 'Friend removed',
     };
+  }
+
+  // ==========================================
+  // SEARCH USERS / FRIENDS
+  // ==========================================
+
+  async searchUsers(currentUserId: string, query: string) {
+    const trimmed = (query || '').trim();
+    if (!trimmed) {
+      return [];
+    }
+
+    // 1. Fetch potential matching users (exclude current user, banned users, limit to 20)
+    const matchingUsers = await this.prisma.user.findMany({
+      where: {
+        id: { not: currentUserId },
+        isBanned: false,
+        username: {
+          contains: trimmed,
+          mode: 'insensitive',
+        },
+      },
+      select: {
+        id: true,
+        username: true,
+        age: true,
+        gender: true,
+        avatar: true,
+        language: true,
+        interests: true,
+        goal: true,
+        lastSeenAt: true,
+      },
+      take: 20,
+    });
+
+    if (matchingUsers.length === 0) {
+      return [];
+    }
+
+    const candidateIds = matchingUsers.map((u) => u.id);
+
+    // 2. Fetch existing friendships
+    const friendships = await this.prisma.friendship.findMany({
+      where: {
+        OR: [
+          { userAId: currentUserId, userBId: { in: candidateIds } },
+          { userBId: currentUserId, userAId: { in: candidateIds } },
+        ],
+      },
+      select: {
+        userAId: true,
+        userBId: true,
+      },
+    });
+
+    const friendIdSet = new Set<string>();
+    for (const f of friendships) {
+      if (f.userAId === currentUserId) friendIdSet.add(f.userBId);
+      if (f.userBId === currentUserId) friendIdSet.add(f.userAId);
+    }
+
+    // 3. Fetch pending friend requests
+    const sentRequests = await this.prisma.friendRequest.findMany({
+      where: {
+        senderId: currentUserId,
+        receiverId: { in: candidateIds },
+        status: 'PENDING',
+      },
+      select: { receiverId: true },
+    });
+    const sentRequestSet = new Set(sentRequests.map((r) => r.receiverId));
+
+    const receivedRequests = await this.prisma.friendRequest.findMany({
+      where: {
+        senderId: { in: candidateIds },
+        receiverId: currentUserId,
+        status: 'PENDING',
+      },
+      select: { id: true, senderId: true },
+    });
+    const receivedRequestMap = new Map<string, string>();
+    for (const r of receivedRequests) {
+      receivedRequestMap.set(r.senderId, r.id);
+    }
+
+    // 4. Fetch blocks between users
+    const blocks = await this.prisma.block.findMany({
+      where: {
+        OR: [
+          { blockerId: currentUserId, blockedId: { in: candidateIds } },
+          { blockerId: { in: candidateIds }, blockedId: currentUserId },
+        ],
+      },
+      select: { blockerId: true, blockedId: true },
+    });
+    const blockedSet = new Set<string>();
+    for (const b of blocks) {
+      if (b.blockerId === currentUserId) blockedSet.add(b.blockedId);
+      if (b.blockedId === currentUserId) blockedSet.add(b.blockerId);
+    }
+
+    // 5. Map presence and relationship status
+    const results = await Promise.all(
+      matchingUsers.map(async (u) => {
+        let isOnline = false;
+        if (this.presenceChecker) {
+          try {
+            isOnline = await this.presenceChecker(u.id);
+          } catch {
+            isOnline = false;
+          }
+        }
+
+        let relationshipStatus: 'none' | 'friends' | 'pending_sent' | 'pending_received' | 'blocked' = 'none';
+        let incomingRequestId: string | undefined = undefined;
+
+        if (blockedSet.has(u.id)) {
+          relationshipStatus = 'blocked';
+        } else if (friendIdSet.has(u.id)) {
+          relationshipStatus = 'friends';
+        } else if (sentRequestSet.has(u.id)) {
+          relationshipStatus = 'pending_sent';
+        } else if (receivedRequestMap.has(u.id)) {
+          relationshipStatus = 'pending_received';
+          incomingRequestId = receivedRequestMap.get(u.id);
+        }
+
+        return {
+          id: u.id,
+          username: u.username,
+          age: u.age,
+          gender: u.gender,
+          avatar: u.avatar,
+          language: u.language,
+          interests: u.interests,
+          goal: u.goal,
+          lastSeenAt: u.lastSeenAt,
+          isOnline,
+          relationshipStatus,
+          incomingRequestId,
+        };
+      }),
+    );
+
+    return results;
   }
 }

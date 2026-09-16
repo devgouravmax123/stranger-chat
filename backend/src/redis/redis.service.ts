@@ -56,6 +56,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   private fallbackMemoryMap = new Map<string, { value: string; expiresAt?: number }>();
+  private fallbackUserSockets = new Map<string, Set<string>>();
 
   /**
    * Basic String Key Operations with in-memory resilience
@@ -295,6 +296,93 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     if (!this.isConnected) return;
     const key = `presence:user:${socketId}`;
     await this.del(key);
+  }
+
+  /**
+   * User Multi-Socket Presence Tracking
+   */
+  async addUserSocketPresence(userId: string, socketId: string): Promise<number> {
+    const setKey = `presence:sockets:${userId}`;
+    const userKey = `presence:user:${userId}`;
+    if (!this.isConnected) {
+      const sockets = this.fallbackUserSockets.get(userId) || new Set<string>();
+      sockets.add(socketId);
+      this.fallbackUserSockets.set(userId, sockets);
+      return sockets.size;
+    }
+    try {
+      await this.client.sadd(setKey, socketId);
+      await this.client.expire(setKey, 86400);
+      await this.set(userKey, 'online', 86400);
+      return await this.client.scard(setKey);
+    } catch {
+      return 1;
+    }
+  }
+
+  async removeUserSocketPresence(userId: string, socketId: string): Promise<number> {
+    const setKey = `presence:sockets:${userId}`;
+    const userKey = `presence:user:${userId}`;
+    if (!this.isConnected) {
+      const sockets = this.fallbackUserSockets.get(userId);
+      if (sockets) {
+        sockets.delete(socketId);
+        if (sockets.size === 0) this.fallbackUserSockets.delete(userId);
+        return sockets.size;
+      }
+      return 0;
+    }
+    try {
+      await this.client.srem(setKey, socketId);
+      const remaining = await this.client.scard(setKey);
+      if (remaining === 0) {
+        await this.del(userKey);
+        await this.del(setKey);
+      }
+      return remaining;
+    } catch {
+      return 0;
+    }
+  }
+
+  async isUserOnline(userId: string): Promise<boolean> {
+    if (!this.isConnected) {
+      const sockets = this.fallbackUserSockets.get(userId);
+      return !!(sockets && sockets.size > 0);
+    }
+    try {
+      const count = await this.client.scard(`presence:sockets:${userId}`);
+      if (count > 0) return true;
+      const val = await this.get(`presence:user:${userId}`);
+      return val === 'online';
+    } catch {
+      return false;
+    }
+  }
+
+  async cleanupUserRedisState(userId: string): Promise<void> {
+    const keys = [
+      `presence:user:${userId}`,
+      `presence:sockets:${userId}`,
+      `ai:cooldown:${userId}`,
+      `ai:inflight:${userId}`,
+    ];
+    for (const k of keys) {
+      await this.del(k);
+    }
+    if (this.isConnected) {
+      try {
+        const items = await this.client.lrange('matchmaking:waiting', 0, -1);
+        for (const item of items) {
+          try {
+            const parsed = JSON.parse(item);
+            if (parsed.userId === userId) {
+              await this.client.lrem('matchmaking:waiting', 0, item);
+            }
+          } catch {}
+        }
+      } catch {}
+    }
   }
 
   /**
