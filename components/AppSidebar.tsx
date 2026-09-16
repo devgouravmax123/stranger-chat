@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { UserProfile } from "./EditProfileModal";
 
-export type SidebarTab = "chat" | "friends" | "search-friends";
+export type SidebarTab = "chat" | "friends" | "discover" | "search-friends";
 
 type AppSidebarProps = {
   isOpen: boolean;
@@ -78,7 +78,7 @@ export default function AppSidebar({
           </button>
         </div>
 
-        {/* Navigation Tabs (Chat / Friends / Search) */}
+        {/* Navigation Tabs (Chat / Friends / Discover) */}
         <div className="p-3">
           <div className="grid grid-cols-3 gap-1 bg-zinc-950/80 p-1 rounded-xl border border-zinc-800">
             <button
@@ -116,21 +116,21 @@ export default function AppSidebar({
 
             <button
               type="button"
-              onClick={() => onSelectTab("search-friends")}
+              onClick={() => onSelectTab("discover")}
               className={`py-2 px-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition ${
-                activeTab === "search-friends"
+                activeTab === "discover" || activeTab === "search-friends"
                   ? "bg-indigo-600 text-white shadow-sm shadow-indigo-600/30"
                   : "text-zinc-400 hover:text-zinc-200"
               }`}
-              title="Search Users by Username"
+              title="Discover Registered People"
             >
-              <span>🔎</span>
-              <span>Search</span>
+              <span>🌟</span>
+              <span>Discover</span>
             </button>
           </div>
         </div>
 
-        {/* Search Friends Input (Local filter when in friends tab, or click to open search view) */}
+        {/* Search Friends Input (Click to open Discover People) */}
         <div className="px-3 pb-2">
           <div className="relative">
             <span className="absolute inset-y-0 left-3 flex items-center text-zinc-500 text-xs">
@@ -141,12 +141,12 @@ export default function AppSidebar({
               value={searchQuery}
               onChange={(e) => onSearchQueryChange(e.target.value)}
               onClick={() => {
-                if (activeTab !== "search-friends") {
-                  onSelectTab("search-friends");
+                if (activeTab !== "discover") {
+                  onSelectTab("discover");
                 }
               }}
-              placeholder="Search users / friends..."
-              className="w-full rounded-xl bg-zinc-950/90 border border-zinc-800/80 pl-8 pr-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500 transition"
+              placeholder="Discover people..."
+              className="w-full rounded-xl bg-zinc-950/90 border border-zinc-800/80 pl-8 pr-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500 transition cursor-pointer"
             />
             {searchQuery && (
               <button

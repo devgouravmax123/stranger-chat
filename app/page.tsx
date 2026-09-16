@@ -16,6 +16,7 @@ import { AppNotification } from "@/components/NotificationDropdown";
 import AiSuggestions from "@/components/AiSuggestions";
 import GalaxyBackground from "@/components/GalaxyBackground";
 import SearchFriendsView from "@/components/SearchFriendsView";
+import DiscoverPeopleView from "@/components/DiscoverPeopleView";
 
 // ==========================================
 // NAVIGATION & VIEW TYPES
@@ -26,6 +27,7 @@ export type AppView =
   | "matching"
   | "stranger-chat"
   | "friends"
+  | "discover"
   | "search-friends"
   | "friend-chat";
 
@@ -154,6 +156,11 @@ export default function Home() {
   // ==========================================
 
   const [waiting, setWaiting] = useState(false);
+  const [matchingMode, setMatchingMode] = useState<"idle" | "searching" | "no-one-live" | "keep-waiting">("idle");
+  const [searchElapsedSeconds, setSearchElapsedSeconds] = useState(0);
+  const searchTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const noLiveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   const [strangerRoomId, setStrangerRoomId] = useState<string | null>(null);
   const [strangerUserId, setStrangerUserId] = useState<string | null>(null);
   const [matchScore, setMatchScore] = useState<number | null>(null);
@@ -362,6 +369,17 @@ export default function Home() {
     });
 
     newSocket.on("matched", (data: MatchedData) => {
+      // Clear timers
+      if (noLiveTimeoutRef.current) {
+        clearTimeout(noLiveTimeoutRef.current);
+        noLiveTimeoutRef.current = null;
+      }
+      if (searchTimerRef.current) {
+        clearInterval(searchTimerRef.current);
+        searchTimerRef.current = null;
+      }
+      setMatchingMode("idle");
+      setSearchElapsedSeconds(0);
       setWaiting(false);
       setUserId(data.userId);
       userIdRef.current = data.userId;
@@ -814,6 +832,37 @@ export default function Home() {
     );
   };
 
+  const clearMatchingTimers = useCallback(() => {
+    if (noLiveTimeoutRef.current) {
+      clearTimeout(noLiveTimeoutRef.current);
+      noLiveTimeoutRef.current = null;
+    }
+    if (searchTimerRef.current) {
+      clearInterval(searchTimerRef.current);
+      searchTimerRef.current = null;
+    }
+  }, []);
+
+  const handleCancelSearch = useCallback(() => {
+    clearMatchingTimers();
+    setWaiting(false);
+    setMatchingMode("idle");
+    setSearchElapsedSeconds(0);
+    if (socket) {
+      socket.emit("end_chat");
+    }
+  }, [socket, clearMatchingTimers]);
+
+  const handleKeepWaiting = useCallback(() => {
+    clearMatchingTimers();
+    setMatchingMode("keep-waiting");
+    // User is already in the Redis/Socket.IO matchmaking queue.
+    // Start live search session timer
+    searchTimerRef.current = setInterval(() => {
+      setSearchElapsedSeconds((prev) => prev + 1);
+    }, 1000);
+  }, [clearMatchingTimers]);
+
   const findStranger = async () => {
     if (!socket || !userId) return;
 
@@ -822,6 +871,10 @@ export default function Home() {
       interests,
       goal,
     };
+
+    clearMatchingTimers();
+    setSearchElapsedSeconds(0);
+    setMatchingMode("searching");
 
     try {
       await fetch(`http://localhost:3001/users/${userId}/preferences`, {
@@ -839,9 +892,26 @@ export default function Home() {
       setStrangerUserId(null);
 
       socket.emit("find_stranger", preferences);
+
+      // Start search elapsed seconds timer
+      searchTimerRef.current = setInterval(() => {
+        setSearchElapsedSeconds((prev) => prev + 1);
+      }, 1000);
+
+      // If no match arrives within 2.5 seconds, display the polished No-One-Live-Right-Now prompt
+      noLiveTimeoutRef.current = setTimeout(() => {
+        setMatchingMode((current) => {
+          if (current === "searching") {
+            return "no-one-live";
+          }
+          return current;
+        });
+      }, 2500);
     } catch (error) {
       console.error("Preference save error:", error);
+      clearMatchingTimers();
       setWaiting(false);
+      setMatchingMode("idle");
       showNotification("Could not save matching preferences.");
     }
   };
@@ -850,6 +920,7 @@ export default function Home() {
   const handleNextStranger = () => {
     if (!socket) return;
 
+    clearMatchingTimers();
     setMessages([]);
     setReplyingTo(null);
     setStrangerTyping(false);
@@ -861,12 +932,28 @@ export default function Home() {
     setMessage("");
     setViewProfile(null);
     setWaiting(true);
+    setSearchElapsedSeconds(0);
+    setMatchingMode("searching");
 
     socket.emit("next_stranger");
+
+    searchTimerRef.current = setInterval(() => {
+      setSearchElapsedSeconds((prev) => prev + 1);
+    }, 1000);
+
+    noLiveTimeoutRef.current = setTimeout(() => {
+      setMatchingMode((current) => {
+        if (current === "searching") {
+          return "no-one-live";
+        }
+        return current;
+      });
+    }, 2500);
   };
 
   // FEATURE 7: Exit Stranger Chat Safely
   const handleExitStrangerChat = () => {
+    clearMatchingTimers();
     if (socket) {
       socket.emit("end_chat");
     }
@@ -881,6 +968,8 @@ export default function Home() {
     setMessage("");
     setViewProfile(null);
     setWaiting(false);
+    setMatchingMode("idle");
+    setSearchElapsedSeconds(0);
 
     navigateTo("matching");
   };
@@ -1547,8 +1636,8 @@ export default function Home() {
           isOpen={isSidebarOpen}
           onClose={() => setIsSidebarOpen(false)}
           activeTab={
-            currentView === "search-friends"
-              ? "search-friends"
+            currentView === "discover" || currentView === "search-friends"
+              ? "discover"
               : currentView === "friends" || currentView === "friend-chat"
               ? "friends"
               : "chat"
@@ -1556,8 +1645,8 @@ export default function Home() {
           onSelectTab={(tab) => {
             if (tab === "friends") {
               openFriends();
-            } else if (tab === "search-friends") {
-              navigateTo("search-friends");
+            } else if (tab === "discover" || tab === "search-friends") {
+              navigateTo("discover");
             } else {
               if (currentView !== "stranger-chat") {
                 navigateTo("matching");
@@ -1816,11 +1905,11 @@ export default function Home() {
             </div>
           )}
 
-          {/* VIEW: SEARCH FRIENDS DIRECTORY */}
-          {currentView === "search-friends" && (
-            <SearchFriendsView
+          {/* VIEW: DISCOVER PEOPLE DIRECTORY */}
+          {(currentView === "discover" || currentView === "search-friends") && (
+            <DiscoverPeopleView
               currentUserId={userId || ""}
-              onBack={() => navigateTo("friends")}
+              onBack={() => navigateTo("matching")}
               onOpenProfile={(targetUserId) => openUserProfile(targetUserId)}
               onOpenPrivateChat={(friendData) => {
                 const targetFriendship = friends.find(
@@ -2040,8 +2129,8 @@ export default function Home() {
                   </select>
                 </div>
 
-                {/* Action button */}
-                {!waiting ? (
+                {/* Action / Matchmaking States */}
+                {matchingMode === "idle" && !waiting ? (
                   <button
                     onClick={findStranger}
                     className="mt-6 w-full bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white px-6 py-3.5 rounded-2xl font-bold text-sm transition shadow-lg shadow-indigo-600/30 active:scale-98 flex items-center justify-center gap-2"
@@ -2049,22 +2138,117 @@ export default function Home() {
                     <span>⚡</span>
                     <span>Find a Stranger</span>
                   </button>
-                ) : (
-                  <div className="mt-6 text-center py-5 bg-zinc-950/70 rounded-2xl border border-zinc-800 animate-pulse">
-                    <div className="animate-spin h-6 w-6 border-2 border-indigo-400/40 border-t-indigo-500 rounded-full mx-auto" />
-                    <p className="mt-3 text-white font-bold text-xs">Searching for someone...</p>
-                    <p className="mt-1 text-[11px] text-zinc-400">Finding best match by interests</p>
+                ) : matchingMode === "no-one-live" ? (
+                  /* PART 3: NO-LIVE-STRANGER EXPERIENCE */
+                  <div className="mt-6 p-5 sm:p-6 rounded-2xl bg-zinc-950/80 border border-zinc-800 text-center space-y-4 animate-fadeIn">
+                    <div className="w-12 h-12 rounded-2xl bg-indigo-600/10 border border-indigo-500/20 text-indigo-400 flex items-center justify-center text-2xl mx-auto">
+                      😔
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold text-white">
+                        No one is live right now
+                      </h3>
+                      <p className="mt-1.5 text-xs text-zinc-400 leading-relaxed max-w-sm mx-auto">
+                        There isn&apos;t a stranger available at the moment. You can keep waiting for someone to come online, or discover people already on ChatBuddy.
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                      <button
+                        type="button"
+                        onClick={handleKeepWaiting}
+                        className="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-md shadow-indigo-600/30 transition flex items-center justify-center gap-2 active:scale-95"
+                      >
+                        <span>⏳</span>
+                        <span>Keep Waiting</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => navigateTo("discover")}
+                        className="w-full py-2.5 px-4 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white border border-zinc-700/60 text-xs font-semibold transition flex items-center justify-center gap-2 active:scale-95"
+                      >
+                        <span>🌟</span>
+                        <span>Discover People</span>
+                      </button>
+                    </div>
+
                     <button
-                      onClick={() => {
-                        setWaiting(false);
-                        if (socket) socket.emit("end_chat");
-                      }}
-                      className="mt-3 text-xs text-rose-400 hover:underline"
+                      type="button"
+                      onClick={handleCancelSearch}
+                      className="text-xs text-zinc-500 hover:text-rose-400 transition"
                     >
-                      Cancel search
+                      Cancel Search
                     </button>
                   </div>
+                ) : (
+                  /* PART 4: KEEP WAITING / SEARCHING QUEUE STATE */
+                  <div className="mt-6 text-center py-6 px-4 bg-zinc-950/80 rounded-2xl border border-zinc-800 space-y-3 animate-fadeIn">
+                    <div className="relative w-12 h-12 mx-auto flex items-center justify-center">
+                      <div className="absolute inset-0 rounded-full border-2 border-indigo-500/40 animate-ping" />
+                      <div className="w-10 h-10 rounded-full bg-indigo-600/20 border border-indigo-500/40 text-indigo-400 flex items-center justify-center text-lg">
+                        🔎
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-white font-bold text-sm">Looking for a stranger...</p>
+                      <p className="mt-1 text-xs text-zinc-400">
+                        You&apos;re in the matchmaking queue. We&apos;ll connect you automatically when someone becomes available.
+                      </p>
+                    </div>
+
+                    {/* Real session elapsed timer */}
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-xs font-mono font-semibold text-indigo-400">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                      <span>
+                        Searching for {String(Math.floor(searchElapsedSeconds / 60)).padStart(2, "0")}:
+                        {String(searchElapsedSeconds % 60).padStart(2, "0")}
+                      </span>
+                    </div>
+
+                    <div className="pt-2 flex justify-center">
+                      <button
+                        type="button"
+                        onClick={handleCancelSearch}
+                        className="px-4 py-1.5 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-zinc-400 hover:text-rose-400 text-xs font-medium border border-zinc-700/40 transition active:scale-95"
+                      >
+                        Cancel Search
+                      </button>
+                    </div>
+                  </div>
                 )}
+              </div>
+
+              {/* PART 5: DIRECT MAIN-SCREEN ACCESS TO DISCOVER PEOPLE */}
+              <div className="w-full max-w-lg mt-4 bg-zinc-900/80 backdrop-blur-md border border-zinc-800/80 hover:border-zinc-700/80 rounded-3xl p-5 sm:p-6 shadow-xl transition">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start gap-3.5">
+                    <div className="w-11 h-11 rounded-2xl bg-indigo-600/15 border border-indigo-500/25 text-indigo-400 flex items-center justify-center text-xl shrink-0 mt-0.5">
+                      🌟
+                    </div>
+                    <div>
+                      <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                        <span>Discover People</span>
+                        <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-950/60 border border-emerald-800/40 px-2 py-0.5 rounded-full">
+                          Community
+                        </span>
+                      </h2>
+                      <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+                        Looking for lasting connections? Browse real ChatBuddy members, search by interests, filter by gender or online status, and chat privately anytime.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => navigateTo("discover")}
+                  className="mt-4 w-full py-2.5 px-4 rounded-2xl bg-zinc-800/90 hover:bg-zinc-700 text-zinc-100 hover:text-white border border-zinc-700/70 text-xs font-bold transition flex items-center justify-center gap-2 shadow-xs active:scale-98"
+                >
+                  <span>👥</span>
+                  <span>Browse Registered Members</span>
+                  <span className="text-zinc-400 text-[11px] font-normal">→</span>
+                </button>
               </div>
             </div>
           )}

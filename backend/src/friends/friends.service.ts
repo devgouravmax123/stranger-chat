@@ -695,4 +695,188 @@ export class FriendsService {
 
     return results;
   }
+
+  // ==========================================
+  // DISCOVER USERS (SEARCH + FILTERS + PRESENCE)
+  // ==========================================
+
+  async discoverUsers(params: {
+    currentUserId: string;
+    query?: string;
+    onlineOnly?: boolean;
+    gender?: string;
+    interests?: string[];
+    limit?: number;
+    offset?: number;
+  }) {
+    const { currentUserId, query, onlineOnly, gender, interests, limit = 20, offset = 0 } = params;
+
+    const trimmed = (query || '').trim();
+    const whereClause: any = {
+      id: { not: currentUserId },
+      isBanned: false,
+    };
+
+    // 1. Text search on username
+    if (trimmed) {
+      whereClause.username = {
+        contains: trimmed,
+        mode: 'insensitive',
+      };
+    }
+
+    // 2. Gender filter
+    if (gender && gender.toLowerCase() !== 'any' && gender.toLowerCase() !== 'all') {
+      whereClause.gender = {
+        equals: gender,
+        mode: 'insensitive',
+      };
+    }
+
+    // 3. Interests filter
+    if (interests && Array.isArray(interests) && interests.length > 0) {
+      whereClause.interests = {
+        hasSome: interests,
+      };
+    }
+
+    // Fetch users (if onlineOnly is requested, fetch a slightly larger batch to filter online users)
+    const fetchLimit = onlineOnly ? Math.max(limit * 3, 60) : limit;
+
+    const matchingUsers = await this.prisma.user.findMany({
+      where: whereClause,
+      select: {
+        id: true,
+        username: true,
+        age: true,
+        gender: true,
+        avatar: true,
+        language: true,
+        interests: true,
+        goal: true,
+        lastSeenAt: true,
+      },
+      skip: offset,
+      take: fetchLimit,
+      orderBy: {
+        lastSeenAt: 'desc',
+      },
+    });
+
+    if (matchingUsers.length === 0) {
+      return [];
+    }
+
+    const candidateIds = matchingUsers.map((u) => u.id);
+
+    // Fetch existing friendships
+    const friendships = await this.prisma.friendship.findMany({
+      where: {
+        OR: [
+          { userAId: currentUserId, userBId: { in: candidateIds } },
+          { userBId: currentUserId, userAId: { in: candidateIds } },
+        ],
+      },
+      select: {
+        userAId: true,
+        userBId: true,
+      },
+    });
+
+    const friendIdSet = new Set<string>();
+    for (const f of friendships) {
+      if (f.userAId === currentUserId) friendIdSet.add(f.userBId);
+      if (f.userBId === currentUserId) friendIdSet.add(f.userAId);
+    }
+
+    // Fetch pending friend requests
+    const sentRequests = await this.prisma.friendRequest.findMany({
+      where: {
+        senderId: currentUserId,
+        receiverId: { in: candidateIds },
+        status: 'PENDING',
+      },
+      select: { receiverId: true },
+    });
+    const sentRequestSet = new Set(sentRequests.map((r) => r.receiverId));
+
+    const receivedRequests = await this.prisma.friendRequest.findMany({
+      where: {
+        senderId: { in: candidateIds },
+        receiverId: currentUserId,
+        status: 'PENDING',
+      },
+      select: { id: true, senderId: true },
+    });
+    const receivedRequestMap = new Map<string, string>();
+    for (const r of receivedRequests) {
+      receivedRequestMap.set(r.senderId, r.id);
+    }
+
+    // Fetch blocks between users
+    const blocks = await this.prisma.block.findMany({
+      where: {
+        OR: [
+          { blockerId: currentUserId, blockedId: { in: candidateIds } },
+          { blockerId: { in: candidateIds }, blockedId: currentUserId },
+        ],
+      },
+      select: { blockerId: true, blockedId: true },
+    });
+    const blockedSet = new Set<string>();
+    for (const b of blocks) {
+      if (b.blockerId === currentUserId) blockedSet.add(b.blockedId);
+      if (b.blockedId === currentUserId) blockedSet.add(b.blockerId);
+    }
+
+    // Map presence and relationship status
+    const mappedResults = await Promise.all(
+      matchingUsers.map(async (u) => {
+        let isOnline = false;
+        if (this.presenceChecker) {
+          try {
+            isOnline = await this.presenceChecker(u.id);
+          } catch {
+            isOnline = false;
+          }
+        }
+
+        let relationshipStatus: 'none' | 'friends' | 'pending_sent' | 'pending_received' | 'blocked' = 'none';
+        let incomingRequestId: string | undefined = undefined;
+
+        if (blockedSet.has(u.id)) {
+          relationshipStatus = 'blocked';
+        } else if (friendIdSet.has(u.id)) {
+          relationshipStatus = 'friends';
+        } else if (sentRequestSet.has(u.id)) {
+          relationshipStatus = 'pending_sent';
+        } else if (receivedRequestMap.has(u.id)) {
+          relationshipStatus = 'pending_received';
+          incomingRequestId = receivedRequestMap.get(u.id);
+        }
+
+        return {
+          id: u.id,
+          username: u.username,
+          age: u.age,
+          gender: u.gender,
+          avatar: u.avatar,
+          language: u.language,
+          interests: u.interests,
+          goal: u.goal,
+          lastSeenAt: u.lastSeenAt,
+          isOnline,
+          relationshipStatus,
+          incomingRequestId,
+        };
+      }),
+    );
+
+    // If online-only filter is requested, filter out offline users
+    const finalResults = onlineOnly
+      ? mappedResults.filter((u) => u.isOnline).slice(0, limit)
+      : mappedResults.slice(0, limit);
+
+    return finalResults;
+  }
 }

@@ -31,6 +31,39 @@ export class FriendsController {
   }
 
   // ==========================================
+  // DISCOVER USERS (SEARCH + ADVANCED FILTERS)
+  // GET /friends/discover?userId=xxx&q=yyy&onlineOnly=true&gender=female&interests=Coding,Gaming
+  // ==========================================
+
+  @Get('discover')
+  async discoverUsers(
+    @Query('userId') userId: string,
+    @Query('q') q?: string,
+    @Query('onlineOnly') onlineOnly?: string,
+    @Query('gender') gender?: string,
+    @Query('interests') interests?: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    const isOnlineOnly = onlineOnly === 'true' || onlineOnly === '1';
+    const interestsList = interests
+      ? interests.split(',').map((s) => s.trim()).filter(Boolean)
+      : undefined;
+    const parsedLimit = limit ? Math.min(Math.max(parseInt(limit, 10) || 20, 1), 50) : 20;
+    const parsedOffset = offset ? Math.max(parseInt(offset, 10) || 0, 0) : 0;
+
+    return this.friendsService.discoverUsers({
+      currentUserId: userId,
+      query: q,
+      onlineOnly: isOnlineOnly,
+      gender,
+      interests: interestsList,
+      limit: parsedLimit,
+      offset: parsedOffset,
+    });
+  }
+
+  // ==========================================
   // SEND FRIEND REQUEST
   // POST /friends/request
   // ==========================================
