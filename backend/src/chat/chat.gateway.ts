@@ -68,6 +68,16 @@ interface FriendImageMessageData {
   replyToId?: string;
 }
 
+export interface ActiveCallSession {
+  callId: string;
+  roomId: string;
+  chatType: 'stranger' | 'friend';
+  callerId: string;
+  receiverId?: string;
+  status: 'calling' | 'connected';
+  updatedAt: number;
+}
+
 @WebSocketGateway({
   cors: {
     origin: 'http://localhost:3000',
@@ -84,6 +94,8 @@ export class ChatGateway implements OnGatewayInit {
   private inMemoryUserSockets = new Map<string, Set<string>>();
   private inMemorySocketChats = new Map<string, string>();
   private inMemoryUserPreferences = new Map<string, MatchPreferences>();
+  private inMemoryActiveCallSessions = new Map<string, ActiveCallSession>();
+  private inMemoryUserActiveCalls = new Map<string, string>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -92,6 +104,62 @@ export class ChatGateway implements OnGatewayInit {
     private readonly usersService: UsersService,
     private readonly friendsService: FriendsService,
   ) {}
+
+  getActiveCallForUser(userId: string): ActiveCallSession | null {
+    if (!userId) return null;
+    const callId = this.inMemoryUserActiveCalls.get(userId);
+    if (!callId) return null;
+    const session = this.inMemoryActiveCallSessions.get(callId);
+    if (!session) {
+      this.inMemoryUserActiveCalls.delete(userId);
+      return null;
+    }
+    const now = Date.now();
+    // Prune expired sessions (unanswered call > 45s, or long call > 4h)
+    if (session.status === 'calling' && now - session.updatedAt > 45000) {
+      this.clearActiveCallSession(session.callId);
+      return null;
+    }
+    if (session.status === 'connected' && now - session.updatedAt > 4 * 60 * 60 * 1000) {
+      this.clearActiveCallSession(session.callId);
+      return null;
+    }
+    return session;
+  }
+
+  registerActiveCallSession(session: ActiveCallSession) {
+    this.inMemoryActiveCallSessions.set(session.callId, session);
+    this.inMemoryUserActiveCalls.set(session.callerId, session.callId);
+    if (session.receiverId) {
+      this.inMemoryUserActiveCalls.set(session.receiverId, session.callId);
+    }
+  }
+
+  clearActiveCallSession(callId?: string, roomId?: string, userId?: string) {
+    if (callId) {
+      const session = this.inMemoryActiveCallSessions.get(callId);
+      if (session) {
+        this.inMemoryUserActiveCalls.delete(session.callerId);
+        if (session.receiverId) {
+          this.inMemoryUserActiveCalls.delete(session.receiverId);
+        }
+        this.inMemoryActiveCallSessions.delete(callId);
+      }
+    }
+    if (userId) {
+      const uCallId = this.inMemoryUserActiveCalls.get(userId);
+      if (uCallId) {
+        this.clearActiveCallSession(uCallId);
+      }
+    }
+    if (roomId) {
+      for (const [sCallId, s] of Array.from(this.inMemoryActiveCallSessions.entries())) {
+        if (s.roomId === roomId) {
+          this.clearActiveCallSession(sCallId);
+        }
+      }
+    }
+  }
 
   afterInit(server: Server) {
     this.notifications.registerNotificationEmitter((userId: string, notification: any) => {
@@ -238,6 +306,8 @@ export class ChatGateway implements OnGatewayInit {
     @MessageBody() data: { roomId: string },
   ) {
     if (!data?.roomId) return;
+    this.clearActiveCallSession(undefined, data.roomId);
+    socket.to(data.roomId).emit('video_call_ended', { roomId: data.roomId });
     socket.leave(data.roomId);
     this.inMemoryUserRooms.delete(socket.id);
     this.inMemorySocketChats.delete(socket.id);
@@ -1356,14 +1426,6 @@ export class ChatGateway implements OnGatewayInit {
     });
   }
 
-  @SubscribeMessage('leave_friend_room')
-  leaveFriendRoom(
-    @ConnectedSocket() socket: Socket,
-    @MessageBody() data: { roomId: string },
-  ) {
-    if (data?.roomId) socket.leave(data.roomId);
-  }
-
   @SubscribeMessage('end_chat')
   async endChatHandler(@ConnectedSocket() socket: Socket) {
     await this.leaveChat(socket, 'ended');
@@ -1379,12 +1441,357 @@ export class ChatGateway implements OnGatewayInit {
   }
 
   // ==========================================
+  // WEBRTC VIDEO CALL SIGNALING & SECURITY
+  // ==========================================
+
+  private async validateVideoSignalingContext(
+    socket: Socket,
+    roomId: string,
+    callId?: string,
+  ): Promise<{
+    isValid: boolean;
+    isFriend: boolean;
+    senderId?: string;
+    targetUserId?: string;
+    errorReason?: string;
+  }> {
+    if (!roomId || typeof roomId !== 'string' || !roomId.trim()) {
+      return { isValid: false, isFriend: false, errorReason: 'Room ID is required.' };
+    }
+
+    const senderId = await this.getUserId(socket);
+    if (!senderId) {
+      return { isValid: false, isFriend: false, errorReason: 'Sender is not authenticated.' };
+    }
+
+    // ----------------------------------------------------
+    // FRIEND ROOM VALIDATION
+    // ----------------------------------------------------
+    if (roomId.startsWith('friend-')) {
+      const rest = roomId.slice('friend-'.length);
+      let targetUserId: string | null = null;
+
+      if (rest.startsWith(senderId + '-')) {
+        targetUserId = rest.slice(senderId.length + 1);
+      } else if (rest.endsWith('-' + senderId)) {
+        targetUserId = rest.slice(0, rest.length - senderId.length - 1);
+      }
+
+      if (!targetUserId || !targetUserId.trim()) {
+        return { isValid: false, isFriend: true, errorReason: 'Sender does not belong to this private conversation.' };
+      }
+
+      // Verify canonical room format
+      const canonicalRoomId = `friend-${[senderId, targetUserId].sort().join('-')}`;
+      if (roomId !== canonicalRoomId) {
+        return { isValid: false, isFriend: true, errorReason: 'Invalid friend room structure.' };
+      }
+
+      // 1. Verify recipient user exists in database
+      const targetUser = await this.prisma.user.findUnique({
+        where: { id: targetUserId },
+        select: { id: true, username: true },
+      });
+      if (!targetUser) {
+        return { isValid: false, isFriend: true, errorReason: 'User not found or account was deleted.' };
+      }
+
+      // 2. Verify friendship in PostgreSQL/Prisma
+      const friendship = await this.prisma.friendship.findFirst({
+        where: {
+          OR: [
+            { userAId: senderId, userBId: targetUserId },
+            { userAId: targetUserId, userBId: senderId },
+          ],
+        },
+      });
+      if (!friendship) {
+        return { isValid: false, isFriend: true, errorReason: 'You can only video call accepted ChatBuddy friends.' };
+      }
+
+      // 3. Verify neither user is blocked
+      const block = await this.prisma.block.findFirst({
+        where: {
+          OR: [
+            { blockerId: senderId, blockedId: targetUserId },
+            { blockerId: targetUserId, blockedId: senderId },
+          ],
+        },
+      });
+      if (block) {
+        return { isValid: false, isFriend: true, errorReason: 'Cannot start video call due to user restrictions.' };
+      }
+
+      return {
+        isValid: true,
+        isFriend: true,
+        senderId,
+        targetUserId,
+      };
+    }
+
+    // ----------------------------------------------------
+    // STRANGER ROOM VALIDATION
+    // ----------------------------------------------------
+    const { roomId: currentRoomId } = await this.getSocketContext(socket);
+    if (!currentRoomId || currentRoomId !== roomId) {
+      return { isValid: false, isFriend: false, errorReason: 'Invalid active chat room or call session.' };
+    }
+
+    return {
+      isValid: true,
+      isFriend: false,
+      senderId,
+    };
+  }
+
+  @SubscribeMessage('video_call_request')
+  async handleVideoCallRequest(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody() data: { roomId: string; callId: string },
+  ) {
+    if (!data?.callId) {
+      socket.emit('video_call_error', { message: 'Missing call identifier.' });
+      return;
+    }
+
+    const validation = await this.validateVideoSignalingContext(socket, data?.roomId, data?.callId);
+    if (!validation.isValid) {
+      socket.emit('video_call_error', { message: validation.errorReason || 'Invalid active chat room or call session.' });
+      return;
+    }
+
+    const senderId = validation.senderId!;
+    if (validation.isFriend && validation.targetUserId) {
+      // 1. Check if caller is already in an active connected video call
+      const callerActiveCall = this.getActiveCallForUser(senderId);
+      if (callerActiveCall && callerActiveCall.status === 'connected' && callerActiveCall.callId !== data.callId) {
+        socket.emit('video_call_error', { message: 'You are already in an active video call.' });
+        return;
+      }
+
+      // 2. Check if target user is already in an active connected video call
+      const targetActiveCall = this.getActiveCallForUser(validation.targetUserId);
+      if (targetActiveCall && targetActiveCall.status === 'connected') {
+        socket.emit('video_call_declined', {
+          roomId: data.roomId,
+          callId: data.callId,
+          reason: 'busy',
+        });
+        return;
+      }
+
+      // 3. Check if target friend is currently online
+      const targetSockets = this.inMemoryUserSockets.get(validation.targetUserId);
+      let isTargetOnline = !!(targetSockets && targetSockets.size > 0);
+      if (!isTargetOnline) {
+        isTargetOnline = await this.redis.isUserOnline(validation.targetUserId);
+      }
+
+      if (!isTargetOnline) {
+        socket.emit('video_call_error', { message: 'Friend is currently offline.' });
+        return;
+      }
+
+      // 4. Register active call session
+      this.registerActiveCallSession({
+        callId: data.callId,
+        roomId: data.roomId,
+        chatType: 'friend',
+        callerId: senderId,
+        receiverId: validation.targetUserId,
+        status: 'calling',
+        updatedAt: Date.now(),
+      });
+
+      // Fetch caller info for incoming call modal
+      const caller = await this.prisma.user.findUnique({
+        where: { id: senderId },
+        select: { username: true, avatar: true },
+      });
+
+      const payload = {
+        roomId: data.roomId,
+        callId: data.callId,
+        callerUserId: senderId,
+        callerName: caller?.username || 'Friend',
+        callerAvatar: caller?.avatar || '👤',
+        chatType: 'friend',
+      };
+
+      // SINGLE DELIVERY: Emit only to target user's personal user room
+      // This prevents double delivery to friends who are already in data.roomId
+      this.server.to(`user:${validation.targetUserId}`).emit('video_call_request', payload);
+    } else {
+      this.registerActiveCallSession({
+        callId: data.callId,
+        roomId: data.roomId,
+        chatType: 'stranger',
+        callerId: senderId,
+        status: 'calling',
+        updatedAt: Date.now(),
+      });
+
+      socket.to(data.roomId).emit('video_call_request', {
+        roomId: data.roomId,
+        callId: data.callId,
+        callerUserId: validation.senderId,
+        chatType: 'stranger',
+      });
+    }
+  }
+
+  @SubscribeMessage('video_call_accepted')
+  async handleVideoCallAccepted(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody() data: { roomId: string; callId: string },
+  ) {
+    if (!data?.callId) return;
+    const validation = await this.validateVideoSignalingContext(socket, data?.roomId, data?.callId);
+    if (!validation.isValid) return;
+
+    const session = this.inMemoryActiveCallSessions.get(data.callId);
+    if (session) {
+      session.status = 'connected';
+      session.updatedAt = Date.now();
+    }
+
+    const payload = {
+      roomId: data.roomId,
+      callId: data.callId,
+      responderUserId: validation.senderId,
+    };
+
+    // Both users are in data.roomId, emit cleanly to peer
+    socket.to(data.roomId).emit('video_call_accepted', payload);
+  }
+
+  @SubscribeMessage('video_call_declined')
+  async handleVideoCallDeclined(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody() data: { roomId: string; callId: string; reason?: string },
+  ) {
+    const validation = await this.validateVideoSignalingContext(socket, data?.roomId, data?.callId);
+    if (!validation.isValid) return;
+
+    this.clearActiveCallSession(data?.callId, data?.roomId);
+
+    const payload = {
+      roomId: data.roomId,
+      callId: data?.callId,
+      reason: data?.reason || 'declined',
+    };
+
+    socket.to(data.roomId).emit('video_call_declined', payload);
+    if (validation.isFriend && validation.targetUserId) {
+      this.server.to(`user:${validation.targetUserId}`).emit('video_call_declined', payload);
+    }
+  }
+
+  @SubscribeMessage('video_call_cancelled')
+  async handleVideoCallCancelled(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody() data: { roomId: string; callId: string },
+  ) {
+    const validation = await this.validateVideoSignalingContext(socket, data?.roomId, data?.callId);
+    if (!validation.isValid) return;
+
+    this.clearActiveCallSession(data?.callId, data?.roomId);
+
+    const payload = {
+      roomId: data.roomId,
+      callId: data?.callId,
+    };
+
+    socket.to(data.roomId).emit('video_call_cancelled', payload);
+    if (validation.isFriend && validation.targetUserId) {
+      this.server.to(`user:${validation.targetUserId}`).emit('video_call_cancelled', payload);
+    }
+  }
+
+  @SubscribeMessage('video_offer')
+  async handleVideoOffer(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody() data: { roomId: string; callId: string; sdp: any },
+  ) {
+    const validation = await this.validateVideoSignalingContext(socket, data?.roomId, data?.callId);
+    if (!validation.isValid || !data?.sdp) return;
+
+    const payload = {
+      roomId: data.roomId,
+      callId: data.callId,
+      sdp: data.sdp,
+    };
+
+    socket.to(data.roomId).emit('video_offer', payload);
+  }
+
+  @SubscribeMessage('video_answer')
+  async handleVideoAnswer(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody() data: { roomId: string; callId: string; sdp: any },
+  ) {
+    const validation = await this.validateVideoSignalingContext(socket, data?.roomId, data?.callId);
+    if (!validation.isValid || !data?.sdp) return;
+
+    const payload = {
+      roomId: data.roomId,
+      callId: data.callId,
+      sdp: data.sdp,
+    };
+
+    socket.to(data.roomId).emit('video_answer', payload);
+  }
+
+  @SubscribeMessage('video_ice_candidate')
+  async handleVideoIceCandidate(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody() data: { roomId: string; callId: string; candidate: any },
+  ) {
+    const validation = await this.validateVideoSignalingContext(socket, data?.roomId, data?.callId);
+    if (!validation.isValid || !data?.candidate) return;
+
+    const payload = {
+      roomId: data.roomId,
+      callId: data.callId,
+      candidate: data.candidate,
+    };
+
+    socket.to(data.roomId).emit('video_ice_candidate', payload);
+  }
+
+  @SubscribeMessage('video_call_ended')
+  async handleVideoCallEnded(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody() data: { roomId: string; callId?: string },
+  ) {
+    const validation = await this.validateVideoSignalingContext(socket, data?.roomId, data?.callId);
+    if (!validation.isValid) return;
+
+    this.clearActiveCallSession(data?.callId, data?.roomId);
+
+    const payload = {
+      roomId: data.roomId,
+      callId: data?.callId,
+    };
+
+    socket.to(data.roomId).emit('video_call_ended', payload);
+    if (validation.isFriend && validation.targetUserId) {
+      this.server.to(`user:${validation.targetUserId}`).emit('video_call_ended', payload);
+    }
+  }
+
+  // ==========================================
   // DISCONNECT & LEAVE HELPERS
   // ==========================================
 
   private async leaveChat(socket: Socket, reason: 'skipped' | 'blocked' | 'ended' = 'ended') {
     const { roomId, chatId } = await this.getSocketContext(socket);
     if (!roomId) return;
+
+    // Immediately stop and clear any active video call on leave
+    this.clearActiveCallSession(undefined, roomId);
+    socket.to(roomId).emit('video_call_ended', { roomId, reason });
 
     // Notify stranger of exit reason
     if (reason === 'skipped') {
@@ -1424,8 +1831,23 @@ export class ChatGateway implements OnGatewayInit {
   async handleDisconnect(socket: Socket) {
     console.log('User disconnected:', socket.id);
 
+    const userId = await this.getUserId(socket);
+    if (userId) {
+      const activeCall = this.getActiveCallForUser(userId);
+      if (activeCall) {
+        this.clearActiveCallSession(activeCall.callId);
+        this.server.to(activeCall.roomId).emit('video_call_ended', {
+          roomId: activeCall.roomId,
+          callId: activeCall.callId,
+          reason: 'disconnected',
+        });
+      }
+    }
+
     const { roomId } = await this.getSocketContext(socket);
     if (roomId) {
+      this.clearActiveCallSession(undefined, roomId);
+      socket.to(roomId).emit('video_call_ended', { roomId, reason: 'disconnected' });
       socket.to(roomId).emit('stranger_offline');
     }
 

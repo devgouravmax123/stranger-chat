@@ -10,6 +10,9 @@ type ChatHeaderProps = {
   onBlock?: () => void;
   onBack?: () => void;
   onToggleSidebar?: () => void;
+  onStartVideoCall?: () => void;
+  isVideoCallActive?: boolean;
+  isVideoCallDisabled?: boolean;
 };
 
 export default function ChatHeader({
@@ -20,6 +23,9 @@ export default function ChatHeader({
   onBlock,
   onBack,
   onToggleSidebar,
+  onStartVideoCall,
+  isVideoCallActive = false,
+  isVideoCallDisabled = false,
 }: ChatHeaderProps) {
   const [showMenu, setShowMenu] = useState(false);
 
@@ -73,6 +79,35 @@ export default function ChatHeader({
       </div>
 
       <div className="flex items-center gap-2 shrink-0">
+        {/* VIDEO CALL BUTTON */}
+        {onStartVideoCall && (
+          <button
+            type="button"
+            onClick={onStartVideoCall}
+            disabled={isVideoCallDisabled || isVideoCallActive || status === "disconnected"}
+            title={
+              isVideoCallActive
+                ? "Video call in progress"
+                : status === "disconnected"
+                ? "Stranger is disconnected"
+                : "Start 1-to-1 Video Call"
+            }
+            aria-label="Start video call"
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition active:scale-95 shadow-sm ${
+              isVideoCallActive
+                ? "bg-emerald-950/80 text-emerald-400 border border-emerald-800/60 cursor-default"
+                : isVideoCallDisabled || status === "disconnected"
+                ? "bg-zinc-800/50 text-zinc-500 border border-zinc-800 cursor-not-allowed"
+                : "bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-emerald-600/20"
+            }`}
+          >
+            <span>{isVideoCallActive ? "🟢" : "🎥"}</span>
+            <span className="hidden sm:inline">
+              {isVideoCallActive ? "In Call" : "Video Call"}
+            </span>
+          </button>
+        )}
+
         {/* NEXT STRANGER / SKIP BUTTON */}
         {onSkip && (
           <button

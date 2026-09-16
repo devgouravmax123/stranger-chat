@@ -17,6 +17,10 @@ import AiSuggestions from "@/components/AiSuggestions";
 import GalaxyBackground from "@/components/GalaxyBackground";
 import SearchFriendsView from "@/components/SearchFriendsView";
 import DiscoverPeopleView from "@/components/DiscoverPeopleView";
+import IncomingCallModal from "@/components/IncomingCallModal";
+import CallingModal from "@/components/CallingModal";
+import VideoCallOverlay from "@/components/VideoCallOverlay";
+import { useVideoCall } from "@/hooks/useVideoCall";
 
 // ==========================================
 // NAVIGATION & VIEW TYPES
@@ -232,17 +236,67 @@ export default function Home() {
   }, []);
 
   // ==========================================
+  // WEBRTC VIDEO CHAT HOOK & DRAWER STATE
+  // ==========================================
+
+  const videoCall = useVideoCall({
+    socket,
+    roomId: strangerRoomId,
+    userId,
+    strangerUserId,
+    onNotification: showNotification,
+  });
+
+  const [isVideoChatOpen, setIsVideoChatOpen] = useState(false);
+  const [unreadVideoChatCount, setUnreadVideoChatCount] = useState(0);
+  const isVideoChatOpenRef = useRef(false);
+  isVideoChatOpenRef.current = isVideoChatOpen;
+  const isVideoCallActiveRef = useRef(false);
+  isVideoCallActiveRef.current = videoCall.callState === "connecting" || videoCall.callState === "connected";
+
+  // Friend Private Chat Video Call
+  const friendVideoCall = useVideoCall({
+    socket,
+    roomId: friendRoomId,
+    userId,
+    strangerUserId: selectedFriend?.id || null,
+    onNotification: showNotification,
+  });
+
+  const [isFriendVideoChatOpen, setIsFriendVideoChatOpen] = useState(false);
+  const [unreadFriendVideoChatCount, setUnreadFriendVideoChatCount] = useState(0);
+  const isFriendVideoChatOpenRef = useRef(false);
+  isFriendVideoChatOpenRef.current = isFriendVideoChatOpen;
+  const isFriendVideoCallActiveRef = useRef(false);
+  isFriendVideoCallActiveRef.current = friendVideoCall.callState === "connecting" || friendVideoCall.callState === "connected";
+
+  const [globalIncomingFriendCall, setGlobalIncomingFriendCall] = useState<{
+    roomId: string;
+    callId: string;
+    callerUserId: string;
+    callerName: string;
+    callerAvatar: string;
+  } | null>(null);
+
+  // ==========================================
   // BROWSER HISTORY & NAVIGATION MANAGEMENT
   // ==========================================
 
   const navigateTo = useCallback(
     (view: AppView, pushToHistory = true) => {
+      // If leaving stranger chat or friend chat, safely tear down any active video calls
+      if (view !== "stranger-chat") {
+        videoCall.teardownCall();
+      }
+      if (view !== "friend-chat") {
+        friendVideoCall.teardownCall();
+      }
       setCurrentView(view);
       if (typeof window !== "undefined" && pushToHistory) {
         window.history.pushState({ view }, "", `?view=${view}`);
       }
     },
-    []
+    [videoCall, friendVideoCall]
   );
 
   useEffect(() => {
@@ -251,6 +305,7 @@ export default function Home() {
         const targetView = event.state.view as AppView;
         if (currentView === "stranger-chat" && targetView !== "stranger-chat") {
           // Leaving stranger chat via browser back
+          videoCall.teardownCall();
           if (socket) {
             socket.emit("end_chat");
           }
@@ -261,6 +316,9 @@ export default function Home() {
           setWaiting(false);
         } else if (currentView === "friend-chat" && targetView !== "friend-chat") {
           // Leaving friend chat via browser back
+          friendVideoCall.teardownCall();
+          setIsFriendVideoChatOpen(false);
+          setUnreadFriendVideoChatCount(0);
           if (socket && friendRoomId) {
             socket.emit("leave_friend_room", { roomId: friendRoomId });
           }
@@ -559,6 +617,11 @@ export default function Home() {
 
         setMessages((prev) => [...prev, newMsg]);
 
+        // If in video call and chat panel is closed, increment unread counter
+        if (isVideoCallActiveRef.current && !isVideoChatOpenRef.current) {
+          setUnreadVideoChatCount((prev) => prev + 1);
+        }
+
         // Acknowledge seen if active in stranger-chat
         newSocket.emit("mark_seen", {
           roomId: strangerRoomIdRef.current || undefined,
@@ -797,6 +860,11 @@ export default function Home() {
 
       setFriendMessages((prev) => [...prev, newMsg]);
 
+      // If in friend video call and chat drawer is closed, increment unread counter
+      if (isFriendVideoCallActiveRef.current && !isFriendVideoChatOpenRef.current) {
+        setUnreadFriendVideoChatCount((prev) => prev + 1);
+      }
+
       // Acknowledge seen if recipient is currently active in this friend chat
       if (
         currentViewRef.current === "friend-chat" &&
@@ -813,6 +881,60 @@ export default function Home() {
     newSocket.on("friend_room_error", (data: { message: string }) => {
       setFriendChatLoading(false);
       setFriendsError(data.message || "Could not open private chat");
+    });
+
+    // Global friend incoming video call listener (when not currently in friend-chat for this room)
+    newSocket.on("video_call_request", (data: {
+      roomId: string;
+      callId: string;
+      callerUserId: string;
+      callerName?: string;
+      callerAvatar?: string;
+      chatType?: string;
+    }) => {
+      if (data.chatType === "friend" && data.roomId.startsWith("friend-")) {
+        const isBusyInCall = isVideoCallActiveRef.current || isFriendVideoCallActiveRef.current;
+        if (isBusyInCall) {
+          // Genuinely busy on an active video call
+          newSocket.emit("video_call_declined", {
+            roomId: data.roomId,
+            callId: data.callId,
+            reason: "busy",
+          });
+          return;
+        }
+
+        if (currentViewRef.current !== "friend-chat" || friendRoomIdRef.current !== data.roomId) {
+          setGlobalIncomingFriendCall({
+            roomId: data.roomId,
+            callId: data.callId,
+            callerUserId: data.callerUserId,
+            callerName: data.callerName || "Friend",
+            callerAvatar: data.callerAvatar || "👤",
+          });
+        }
+      }
+    });
+
+    newSocket.on("video_call_cancelled", (data: { roomId: string; callId?: string }) => {
+      setGlobalIncomingFriendCall((prev) => {
+        if (prev && prev.roomId === data.roomId) return null;
+        return prev;
+      });
+    });
+
+    newSocket.on("video_call_declined", (data: { roomId: string; callId?: string }) => {
+      setGlobalIncomingFriendCall((prev) => {
+        if (prev && prev.roomId === data.roomId) return null;
+        return prev;
+      });
+    });
+
+    newSocket.on("video_call_ended", (data: { roomId: string; callId?: string }) => {
+      setGlobalIncomingFriendCall((prev) => {
+        if (prev && prev.roomId === data.roomId) return null;
+        return prev;
+      });
     });
 
     return () => {
@@ -918,6 +1040,9 @@ export default function Home() {
 
   // FEATURE 1: Skip / Next Stranger
   const handleNextStranger = () => {
+    videoCall.teardownCall();
+    setIsVideoChatOpen(false);
+    setUnreadVideoChatCount(0);
     if (!socket) return;
 
     clearMatchingTimers();
@@ -953,6 +1078,9 @@ export default function Home() {
 
   // FEATURE 7: Exit Stranger Chat Safely
   const handleExitStrangerChat = () => {
+    videoCall.teardownCall();
+    setIsVideoChatOpen(false);
+    setUnreadVideoChatCount(0);
     clearMatchingTimers();
     if (socket) {
       socket.emit("end_chat");
@@ -1193,6 +1321,9 @@ export default function Home() {
   const handleBlockStranger = () => {
     if (!socket) return;
     if (confirm("Are you sure you want to block this stranger? You will not be matched again.")) {
+      videoCall.teardownCall();
+      setIsVideoChatOpen(false);
+      setUnreadVideoChatCount(0);
       socket.emit("block_stranger", { blockedUserId: strangerUserId });
     }
   };
@@ -1332,6 +1463,9 @@ export default function Home() {
   };
 
   const closeFriendChat = () => {
+    friendVideoCall.teardownCall();
+    setIsFriendVideoChatOpen(false);
+    setUnreadFriendVideoChatCount(0);
     if (socket && friendRoomId) {
       socket.emit("leave_friend_room", { roomId: friendRoomId });
     }
@@ -1341,6 +1475,52 @@ export default function Home() {
     setFriendMessage("");
     setFriendReplyingTo(null);
     navigateTo("friends");
+  };
+
+  const handleAcceptGlobalIncomingCall = () => {
+    if (!globalIncomingFriendCall || !socket) return;
+    const callData = globalIncomingFriendCall;
+    setGlobalIncomingFriendCall(null);
+
+    const targetFriendship = friends.find(
+      (f) => f.friend.id === callData.callerUserId
+    );
+
+    const friendObj: Friend = targetFriendship
+      ? targetFriendship.friend
+      : {
+          id: callData.callerUserId,
+          username: callData.callerName,
+          age: null,
+          gender: null,
+          avatar: callData.callerAvatar,
+          isOnline: true,
+        };
+
+    setSelectedFriend(friendObj);
+    setFriendRoomId(callData.roomId);
+    setFriendMessages([]);
+    navigateTo("friend-chat");
+
+    socket.emit("open_friend_room", {
+      userId,
+      friendId: callData.callerUserId,
+    });
+
+    friendVideoCall.acceptCall({
+      roomId: callData.roomId,
+      callId: callData.callId,
+    });
+  };
+
+  const handleDeclineGlobalIncomingCall = () => {
+    if (!globalIncomingFriendCall || !socket) return;
+    socket.emit("video_call_declined", {
+      roomId: globalIncomingFriendCall.roomId,
+      callId: globalIncomingFriendCall.callId,
+      reason: "user_declined",
+    });
+    setGlobalIncomingFriendCall(null);
   };
 
   const sendFriendMessage = () => {
@@ -1435,6 +1615,11 @@ export default function Home() {
   const removeFriend = async (friendId: string) => {
     if (!userId) return;
     try {
+      if (selectedFriend?.id === friendId) {
+        friendVideoCall.teardownCall();
+        setIsFriendVideoChatOpen(false);
+        setUnreadFriendVideoChatCount(0);
+      }
       await fetch(`http://localhost:3001/friends/${userId}/${friendId}`, {
         method: "DELETE",
       });
@@ -1467,6 +1652,12 @@ export default function Home() {
   const handleDeleteAccount = async () => {
     if (!userId) return;
     try {
+      videoCall.teardownCall();
+      friendVideoCall.teardownCall();
+      setIsVideoChatOpen(false);
+      setIsFriendVideoChatOpen(false);
+      setUnreadVideoChatCount(0);
+      setUnreadFriendVideoChatCount(0);
       const res = await fetch(`http://localhost:3001/users/${userId}/account`, {
         method: "DELETE",
       });
@@ -1596,6 +1787,77 @@ export default function Home() {
           .includes(searchQuery.toLowerCase().trim())
   );
 
+  // Reusable friend text chat body for both normal mode and in-call drawer mode
+  const friendChatBody = (
+    <div className="flex-1 flex flex-col min-h-0 bg-zinc-950">
+      <MessageList
+        messages={friendMessages}
+        currentUserId={userId}
+        onToggleReaction={handleToggleFriendReaction}
+        onDeleteMessage={handleDeleteFriendMessage}
+        onReplyMessage={(msg) => setFriendReplyingTo(msg)}
+      />
+      <AiSuggestions
+        conversationId={friendRoomId || friendChatId || selectedFriend?.id}
+        messages={friendMessages}
+        currentUserId={userId}
+        onSelectSuggestion={(text) => setFriendMessage(text)}
+      />
+      <MessageInput
+        message={friendMessage}
+        setMessage={setFriendMessage}
+        sendMessage={sendFriendMessage}
+        onVoiceRecorded={sendFriendVoice}
+        onImageSelected={sendFriendImage}
+        replyingTo={friendReplyingTo}
+        onCancelReply={() => setFriendReplyingTo(null)}
+      />
+    </div>
+  );
+
+  // Reusable stranger text chat body for both normal mode and in-call drawer mode
+  const strangerChatBody = (
+    <div className="flex-1 flex flex-col min-h-0 bg-zinc-950">
+      <MessageList
+        messages={messages}
+        onToggleReaction={handleToggleReaction}
+        onDeleteMessage={handleDeleteMessage}
+        onReplyMessage={handleReplyMessage}
+      />
+
+      {/* Real-time typing indicator */}
+      {strangerTyping && (
+        <div className="px-6 py-1.5 text-xs text-zinc-400 animate-pulse bg-zinc-950 flex items-center gap-1.5 border-t border-zinc-900">
+          <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 animate-ping" />
+          Stranger is typing...
+        </div>
+      )}
+
+      {/* AI Conversation Suggestions */}
+      <AiSuggestions
+        conversationId={strangerRoomId || strangerUserId}
+        messages={messages}
+        currentUserId={userId || undefined}
+        onSelectSuggestion={(text) => setMessage(text)}
+        disabled={strangerStatus === "disconnected"}
+      />
+
+      {/* Message Input with Voice, Image, Debounced typing */}
+      <MessageInput
+        message={message}
+        setMessage={setMessage}
+        sendMessage={sendStrangerMessage}
+        onVoiceRecorded={sendStrangerVoice}
+        onImageSelected={sendStrangerImage}
+        replyingTo={replyingTo}
+        onCancelReply={() => setReplyingTo(null)}
+        onTypingStart={handleTypingStart}
+        onTypingStop={handleTypingStop}
+        disabled={strangerStatus === "disconnected"}
+      />
+    </div>
+  );
+
   // ==========================================
   // RENDER: MAIN APPLICATION (HEADER + SIDEBAR + WORKSPACE)
   // ==========================================
@@ -1708,6 +1970,32 @@ export default function Home() {
                   )}
                 </div>
 
+                {/* 🎥 Video Call Button */}
+                <button
+                  type="button"
+                  onClick={friendVideoCall.startCall}
+                  disabled={
+                    friendVideoCall.callState !== "idle" ||
+                    !selectedFriend?.id ||
+                    !selectedFriend?.isOnline
+                  }
+                  title={
+                    !selectedFriend?.isOnline
+                      ? "Friend is currently offline"
+                      : friendVideoCall.callState !== "idle"
+                      ? "Video call in progress"
+                      : "Start Video Call"
+                  }
+                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 active:scale-95 shadow-xs ${
+                    friendVideoCall.callState === "connected" || friendVideoCall.callState === "connecting"
+                      ? "bg-rose-600 text-white hover:bg-rose-500 border border-rose-500/50"
+                      : "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white border border-indigo-500/40 shadow-indigo-600/20"
+                  } disabled:opacity-40 disabled:cursor-not-allowed`}
+                >
+                  <span>🎥</span>
+                  <span className="hidden xs:inline">Video Call</span>
+                </button>
+
                 <button
                   type="button"
                   onClick={() => openUserProfile(selectedFriend?.id || null)}
@@ -1719,6 +2007,24 @@ export default function Home() {
                 </button>
               </div>
 
+              {/* VIDEO CALL MODALS */}
+              {friendVideoCall.callState === "calling" && (
+                <CallingModal
+                  onCancel={friendVideoCall.cancelCall}
+                  targetName={selectedFriend?.username || "Friend"}
+                />
+              )}
+
+              {friendVideoCall.callState === "incoming" && (
+                <IncomingCallModal
+                  onAccept={friendVideoCall.acceptCall}
+                  onDecline={friendVideoCall.declineCall}
+                  callerName={friendVideoCall.callerInfo?.callerName || selectedFriend?.username || "Friend"}
+                  callerAvatar={friendVideoCall.callerInfo?.callerAvatar || selectedFriend?.avatar || "👤"}
+                />
+              )}
+
+              {/* FRIEND CHAT CONTENT: DEDICATED VIDEO OVERLAY OR NORMAL TEXT CHAT */}
               {friendChatLoading ? (
                 <div className="flex-1 flex items-center justify-center bg-zinc-950">
                   <div className="text-center">
@@ -1726,31 +2032,38 @@ export default function Home() {
                     <p className="mt-3 text-xs text-zinc-400">Opening private chat...</p>
                   </div>
                 </div>
+              ) : (friendVideoCall.callState === "connecting" || friendVideoCall.callState === "connected" || friendVideoCall.callState === "failed" || friendVideoCall.connectionFailure?.failed) ? (
+                <VideoCallOverlay
+                  localStream={friendVideoCall.localStream}
+                  remoteStream={friendVideoCall.remoteStream}
+                  isMicMuted={friendVideoCall.isMicMuted}
+                  isCameraOff={friendVideoCall.isCameraOff}
+                  isRemoteCameraOff={friendVideoCall.isRemoteCameraOff}
+                  callState={friendVideoCall.callState}
+                  connectionFailure={friendVideoCall.connectionFailure}
+                  onRetryCall={friendVideoCall.retryCall}
+                  onDismissFailure={friendVideoCall.dismissFailure}
+                  strangerAvatar={selectedFriend?.avatar || "👤"}
+                  strangerUsername={selectedFriend?.username || "Friend"}
+                  onToggleMute={friendVideoCall.toggleMute}
+                  onToggleCamera={friendVideoCall.toggleCamera}
+                  onEndCall={() => {
+                    friendVideoCall.endCall();
+                    friendVideoCall.dismissFailure();
+                    setIsFriendVideoChatOpen(false);
+                    setUnreadFriendVideoChatCount(0);
+                  }}
+                  isChatOpen={isFriendVideoChatOpen}
+                  onToggleChat={() => {
+                    setIsFriendVideoChatOpen((prev) => !prev);
+                    setUnreadFriendVideoChatCount(0);
+                  }}
+                  unreadChatCount={unreadFriendVideoChatCount}
+                >
+                  {friendChatBody}
+                </VideoCallOverlay>
               ) : (
-                <div className="flex-1 flex flex-col min-h-0 bg-zinc-950">
-                  <MessageList
-                    messages={friendMessages}
-                    currentUserId={userId}
-                    onToggleReaction={handleToggleFriendReaction}
-                    onDeleteMessage={handleDeleteFriendMessage}
-                    onReplyMessage={(msg) => setFriendReplyingTo(msg)}
-                  />
-                  <AiSuggestions
-                    conversationId={friendRoomId || friendChatId || selectedFriend?.id}
-                    messages={friendMessages}
-                    currentUserId={userId}
-                    onSelectSuggestion={(text) => setFriendMessage(text)}
-                  />
-                  <MessageInput
-                    message={friendMessage}
-                    setMessage={setFriendMessage}
-                    sendMessage={sendFriendMessage}
-                    onVoiceRecorded={sendFriendVoice}
-                    onImageSelected={sendFriendImage}
-                    replyingTo={friendReplyingTo}
-                    onCancelReply={() => setFriendReplyingTo(null)}
-                  />
-                </div>
+                friendChatBody
               )}
             </div>
           )}
@@ -1949,92 +2262,105 @@ export default function Home() {
                 onBlock={handleBlockStranger}
                 status={strangerStatus}
                 onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
+                onStartVideoCall={videoCall.startCall}
+                isVideoCallActive={videoCall.callState === "connected" || videoCall.callState === "connecting"}
+                isVideoCallDisabled={videoCall.callState !== "idle" || strangerStatus === "disconnected"}
               />
 
-              {/* Compatibility score */}
-              {matchScore !== null && (
-                <div className="text-center py-1.5 bg-zinc-950/80 text-xs font-semibold text-zinc-400 border-b border-zinc-800/80">
-                  Match compatibility:{" "}
-                  <span className="text-indigo-400 font-bold">{matchScore.toFixed(0)}%</span>
-                </div>
+              {/* VIDEO CALL MODALS & OVERLAY */}
+              {videoCall.callState === "calling" && (
+                <CallingModal onCancel={videoCall.cancelCall} />
               )}
 
-              {/* Add Friend Banner */}
-              <div className="px-4 py-2 border-b border-zinc-800/80 bg-zinc-950/60 flex items-center justify-between shrink-0">
-                {!friendRequestSent ? (
-                  <button
-                    onClick={sendFriendRequest}
-                    disabled={!strangerUserId}
-                    className="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-1.5 rounded-xl text-xs font-semibold transition disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed shadow-xs flex items-center justify-center gap-1.5"
-                  >
-                    <span>👥</span>
-                    <span>Add Stranger as Friend</span>
-                  </button>
-                ) : (
-                  <div className="w-full text-center bg-emerald-950/50 border border-emerald-800/60 text-emerald-300 py-1.5 rounded-xl text-xs font-semibold">
-                    ✓ Friend request sent
-                  </div>
-                )}
-              </div>
-
-              {/* Message List with Delivery, Reactions, Replies, Soft-Delete */}
-              <div className="flex-1 flex flex-col min-h-0 bg-zinc-950">
-                <MessageList
-                  messages={messages}
-                  onToggleReaction={handleToggleReaction}
-                  onDeleteMessage={handleDeleteMessage}
-                  onReplyMessage={handleReplyMessage}
+              {videoCall.callState === "incoming" && (
+                <IncomingCallModal
+                  onAccept={videoCall.acceptCall}
+                  onDecline={videoCall.declineCall}
                 />
+              )}
 
-                {/* Real-time typing indicator */}
-                {strangerTyping && (
-                  <div className="px-6 py-1.5 text-xs text-zinc-400 animate-pulse bg-zinc-950 flex items-center gap-1.5 border-t border-zinc-900">
-                    <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 animate-ping" />
-                    Stranger is typing...
-                  </div>
-                )}
-
-                {/* AI Conversation Suggestions */}
-                <AiSuggestions
-                  conversationId={strangerRoomId || strangerUserId}
-                  messages={messages}
-                  currentUserId={userId || undefined}
-                  onSelectSuggestion={(text) => setMessage(text)}
-                  disabled={strangerStatus === "disconnected"}
-                />
-
-                {/* Message Input with Voice, Image, Debounced typing */}
-                <MessageInput
-                  message={message}
-                  setMessage={setMessage}
-                  sendMessage={sendStrangerMessage}
-                  onVoiceRecorded={sendStrangerVoice}
-                  onImageSelected={sendStrangerImage}
-                  replyingTo={replyingTo}
-                  onCancelReply={() => setReplyingTo(null)}
-                  onTypingStart={handleTypingStart}
-                  onTypingStop={handleTypingStop}
-                  disabled={strangerStatus === "disconnected"}
-                />
-              </div>
-
-              {/* Action Footer: Next Stranger & End Chat */}
-              <div className="grid grid-cols-2 border-t border-zinc-800/90 divide-x divide-zinc-800/90 bg-zinc-900 shrink-0">
-                <button
-                  onClick={handleNextStranger}
-                  className="py-3 text-xs sm:text-sm font-semibold text-indigo-400 hover:bg-zinc-800 transition flex items-center justify-center gap-1.5"
+              {/* VIDEO CALL ACTIVE: DEDICATED PRIMARY VIDEO MODE */}
+              {(videoCall.callState === "connecting" || videoCall.callState === "connected" || videoCall.callState === "failed" || videoCall.connectionFailure?.failed) ? (
+                <VideoCallOverlay
+                  localStream={videoCall.localStream}
+                  remoteStream={videoCall.remoteStream}
+                  isMicMuted={videoCall.isMicMuted}
+                  isCameraOff={videoCall.isCameraOff}
+                  isRemoteCameraOff={videoCall.isRemoteCameraOff}
+                  callState={videoCall.callState}
+                  connectionFailure={videoCall.connectionFailure}
+                  onRetryCall={videoCall.retryCall}
+                  onDismissFailure={videoCall.dismissFailure}
+                  strangerAvatar={viewProfile?.avatar || "👤"}
+                  strangerUsername={viewProfile?.username || "Stranger"}
+                  onToggleMute={videoCall.toggleMute}
+                  onToggleCamera={videoCall.toggleCamera}
+                  onEndCall={() => {
+                    videoCall.endCall();
+                    videoCall.dismissFailure();
+                    setIsVideoChatOpen(false);
+                    setUnreadVideoChatCount(0);
+                  }}
+                  isChatOpen={isVideoChatOpen}
+                  onToggleChat={() => {
+                    setIsVideoChatOpen((prev) => !prev);
+                    setUnreadVideoChatCount(0);
+                  }}
+                  unreadChatCount={unreadVideoChatCount}
                 >
-                  <span>⏭️</span>
-                  <span>Next Stranger</span>
-                </button>
-                <button
-                  onClick={handleExitStrangerChat}
-                  className="py-3 text-xs sm:text-sm font-semibold text-rose-400 hover:bg-zinc-800 transition flex items-center justify-center gap-1.5"
-                >
-                  <span>✕</span>
-                  <span>End Chat</span>
-                </button>
-              </div>
+                  {strangerChatBody}
+                </VideoCallOverlay>
+              ) : (
+                /* NORMAL FULL-SIZE TEXT CHAT MODE */
+                <div className="flex-1 flex flex-col min-h-0">
+                  {/* Compatibility score */}
+                  {matchScore !== null && (
+                    <div className="text-center py-1.5 bg-zinc-950/80 text-xs font-semibold text-zinc-400 border-b border-zinc-800/80">
+                      Match compatibility:{" "}
+                      <span className="text-indigo-400 font-bold">{matchScore.toFixed(0)}%</span>
+                    </div>
+                  )}
+
+                  {/* Add Friend Banner */}
+                  <div className="px-4 py-2 border-b border-zinc-800/80 bg-zinc-950/60 flex items-center justify-between shrink-0">
+                    {!friendRequestSent ? (
+                      <button
+                        onClick={sendFriendRequest}
+                        disabled={!strangerUserId}
+                        className="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-1.5 rounded-xl text-xs font-semibold transition disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed shadow-xs flex items-center justify-center gap-1.5"
+                      >
+                        <span>👥</span>
+                        <span>Add Stranger as Friend</span>
+                      </button>
+                    ) : (
+                      <div className="w-full text-center bg-emerald-950/50 border border-emerald-800/60 text-emerald-300 py-1.5 rounded-xl text-xs font-semibold">
+                        ✓ Friend request sent
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Full size message list and composer */}
+                  {strangerChatBody}
+
+                  {/* Action Footer: Next Stranger & End Chat */}
+                  <div className="grid grid-cols-2 border-t border-zinc-800/90 divide-x divide-zinc-800/90 bg-zinc-900 shrink-0">
+                    <button
+                      onClick={handleNextStranger}
+                      className="py-3 text-xs sm:text-sm font-semibold text-indigo-400 hover:bg-zinc-800 transition flex items-center justify-center gap-1.5"
+                    >
+                      <span>⏭️</span>
+                      <span>Next Stranger</span>
+                    </button>
+                    <button
+                      onClick={handleExitStrangerChat}
+                      className="py-3 text-xs sm:text-sm font-semibold text-rose-400 hover:bg-zinc-800 transition flex items-center justify-center gap-1.5"
+                    >
+                      <span>✕</span>
+                      <span>End Chat</span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -2272,6 +2598,16 @@ export default function Home() {
         onClose={() => setIsReportOpen(false)}
         onSubmit={handleReportSubmit}
       />
+
+      {/* Global Incoming Friend Video Call Modal */}
+      {globalIncomingFriendCall && currentView !== "friend-chat" && (
+        <IncomingCallModal
+          onAccept={handleAcceptGlobalIncomingCall}
+          onDecline={handleDeclineGlobalIncomingCall}
+          callerName={globalIncomingFriendCall.callerName}
+          callerAvatar={globalIncomingFriendCall.callerAvatar}
+        />
+      )}
 
       {/* User Profile Viewing Modal */}
       <UserProfileModal user={viewProfile} onClose={() => setViewProfile(null)} />
