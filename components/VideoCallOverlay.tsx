@@ -47,6 +47,8 @@ export default function VideoCallOverlay({
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const [isRetryCoolingDown, setIsRetryCoolingDown] = useState(false);
+  const [isAudioAutoplayBlocked, setIsAudioAutoplayBlocked] = useState(false);
+  const [audioPlaybackError, setAudioPlaybackError] = useState(false);
 
   // Attach local media stream to local video element cleanly
   useEffect(() => {
@@ -87,44 +89,100 @@ export default function VideoCallOverlay({
     };
   }, [localStream]);
 
-  // Attach remote media stream to remote video element cleanly
+  const [remoteAudioSignal, setRemoteAudioSignal] = useState<"DETECTED" | "SILENT">("SILENT");
+
+  // Attach remote media stream to remote video element cleanly (audio + video)
   useEffect(() => {
     const video = remoteVideoRef.current;
-    if (!video) return;
 
     if (!remoteStream) {
-      if (video.srcObject) {
+      if (video && video.srcObject) {
         video.srcObject = null;
       }
+      setIsAudioAutoplayBlocked(false);
+      setAudioPlaybackError(false);
+      setRemoteAudioSignal("SILENT");
       return;
     }
 
-    // Only assign srcObject if not already attached to this stream
-    if (video.srcObject !== remoteStream) {
-      video.srcObject = remoteStream;
-    }
-
+    // Remote Media Playback: Video + Audio synchronized in primary video element
     let isCancelled = false;
-    const playVideo = async () => {
-      try {
-        if (video.paused && !isCancelled) {
-          await video.play();
-        }
-      } catch (err: any) {
-        // Expected lifecycle race if play() is superseded by a new load request
-        if (isCancelled || err?.name === "AbortError") {
-          return;
-        }
-        console.warn("[VideoCallOverlay] Remote video play error:", err);
-      }
-    };
 
-    playVideo();
+    if (video) {
+      if (video.srcObject !== remoteStream) {
+        video.srcObject = remoteStream;
+      }
+      video.muted = false;
+      video.volume = 1.0;
+
+      const audioTracks = remoteStream.getAudioTracks();
+      if (audioTracks.length > 0) {
+        setRemoteAudioSignal("DETECTED");
+        audioTracks.forEach((t) => {
+          t.enabled = true;
+        });
+      } else {
+        setRemoteAudioSignal("SILENT");
+      }
+
+      const playMedia = async () => {
+        try {
+          if (!isCancelled) {
+            await video.play();
+            setIsAudioAutoplayBlocked(false);
+            setAudioPlaybackError(false);
+
+            if (process.env.NODE_ENV !== "production") {
+              console.log("[VideoCallOverlay:DEV_MEDIA_LOG]", {
+                videoMuted: video.muted,
+                videoVolume: video.volume,
+                videoPaused: video.paused,
+                videoReadyState: video.readyState,
+                audioTracksCount: audioTracks.length,
+                audioTrackEnabled: audioTracks[0]?.enabled,
+                audioTrackMuted: audioTracks[0]?.muted,
+              });
+            }
+          }
+        } catch (err: any) {
+          if (isCancelled || err?.name === "AbortError") return;
+          if (err?.name === "NotAllowedError") {
+            console.warn(
+              "[VideoCallOverlay] Browser autoplay policy blocked unmuted media playback. Falling back to muted video and prompting user gesture."
+            );
+            video.muted = true;
+            video.play().catch(() => {});
+            setIsAudioAutoplayBlocked(true);
+            return;
+          }
+          console.warn("[VideoCallOverlay] Remote media play error:", err);
+          setAudioPlaybackError(true);
+        }
+      };
+
+      playMedia();
+    }
 
     return () => {
       isCancelled = true;
     };
   }, [remoteStream]);
+
+  const handleEnableAudio = async () => {
+    const video = remoteVideoRef.current;
+    try {
+      if (video) {
+        video.muted = false;
+        video.volume = 1.0;
+        await video.play();
+      }
+      setIsAudioAutoplayBlocked(false);
+      setAudioPlaybackError(false);
+    } catch (e) {
+      console.warn("[VideoCallOverlay] Failed to start audio on user gesture:", e);
+      setAudioPlaybackError(true);
+    }
+  };
 
   const handleRetryClick = () => {
     if (isRetryCoolingDown || !onRetryCall) return;
@@ -144,6 +202,7 @@ export default function VideoCallOverlay({
         {/* Remote Video Container */}
         <div className="relative flex-1 w-full h-full flex items-center justify-center bg-[#05050c] overflow-hidden">
           {/* Remote Video Element */}
+          {/* Remote Video Element (renders video and outputs unmuted audio) */}
           <video
             ref={remoteVideoRef}
             autoPlay
@@ -285,6 +344,27 @@ export default function VideoCallOverlay({
                 : "Connecting..."}
             </span>
           </div>
+
+          {/* Autoplay Blocked Recovery Action */}
+          {isAudioAutoplayBlocked && !connectionFailure?.failed && (
+            <button
+              type="button"
+              onClick={handleEnableAudio}
+              className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs shadow-2xl animate-bounce cursor-pointer transition active:scale-95"
+              title="Click to enable remote audio"
+            >
+              <span className="text-sm">🔊</span>
+              <span>Tap to enable audio</span>
+            </button>
+          )}
+
+          {/* Remote Audio Playback Warning */}
+          {audioPlaybackError && !isConnecting && !connectionFailure?.failed && (
+            <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 max-w-sm px-3.5 py-2 rounded-xl bg-zinc-900/95 border border-amber-500/60 text-amber-200 text-xs font-medium shadow-xl flex items-center gap-2 text-center backdrop-blur-md animate-fadeIn">
+              <span className="text-sm shrink-0">⚠️</span>
+              <span>Unable to play the remote audio. Check your browser audio settings and try again.</span>
+            </div>
+          )}
         </div>
 
         {/* ==========================================

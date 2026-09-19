@@ -1,0 +1,55 @@
+{
+  "tier": "100_users",
+  "concurrency": 100,
+  "durationSeconds": 61.2,
+  "connections": {
+    "attempted": 100,
+    "connected": 100,
+    "successful": 100,
+    "failed": 0,
+    "connectionSuccessRatePercent": 100,
+    "latencyMs": {
+      "avg": 24.4,
+      "p50": 21,
+      "p95": 48,
+      "p99": 67
+    }
+  },
+  "matchmaking": {
+    "attempts": 100,
+    "successfulMatches": 100,
+    "matchedPairsCount": 50,
+    "unmatchedUsers": 0,
+    "matchmakingSuccessRatePercent": 100,
+    "queueWaitLatencyMs": {
+      "avg": 4405.3,
+      "p50": 4386,
+      "p95": 4572,
+      "p99": 4732
+    },
+    "matchExecutionLatencyMs": {
+      "avg": 4380.3,
+      "p50": 4370,
+      "p95": 4484,
+      "p99": 4747
+    },
+    "matchLatencyMs": {
+      "avg": 4380.3,
+      "p50": 4370,
+      "p95": 4484,
+      "p99": 4747
+    }
+  },
+  "messaging": {
+    "sent": 1181,
+    "received": 892,
+    "deliveryDefinition": "Messages received by room counterpart via receive_message event during active session."
+  },
+  "errors": {
+    "connectErrors": 0,
+    "socketErrors": 0,
+    "socketDisconnects": 0,
+    "totalErrors": 0
+  },
+  "timestamp": "2026-09-17T13:05:40.585Z"
+}

@@ -1,0 +1,41 @@
+{
+  "tier": "50_users",
+  "concurrency": 50,
+  "durationSeconds": 60.1,
+  "connections": {
+    "attempted": 50,
+    "connected": 50,
+    "successful": 50,
+    "failed": 0,
+    "connectionSuccessRatePercent": 100,
+    "latencyMs": {
+      "avg": 96.8,
+      "p50": 98,
+      "p95": 117,
+      "p99": 119
+    }
+  },
+  "matchmaking": {
+    "attempts": 50,
+    "successfulMatches": 50,
+    "matchedPairsCount": 25,
+    "matchmakingSuccessRatePercent": 100,
+    "matchLatencyMs": {
+      "avg": 6101,
+      "p50": 6067,
+      "p95": 6900,
+      "p99": 6940
+    }
+  },
+  "messaging": {
+    "sent": 549,
+    "received": 483
+  },
+  "errors": {
+    "connectErrors": 0,
+    "socketErrors": 0,
+    "socketDisconnects": 0,
+    "totalErrors": 0
+  },
+  "timestamp": "2026-09-17T11:33:26.274Z"
+}

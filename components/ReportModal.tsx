@@ -41,6 +41,9 @@ export default function ReportModal({
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="report-modal-title"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-fadeIn"
       onClick={onClose}
     >
@@ -57,18 +60,19 @@ export default function ReportModal({
               Report Submitted
             </h3>
             <p className="mt-1 text-sm text-zinc-400">
-              Thank you for helping keep ChatBuddy safe.
+              Thank you for helping keep Chirp safe.
             </p>
           </div>
         ) : (
           <form onSubmit={handleSubmit}>
             <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
-              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+              <h2 id="report-modal-title" className="text-lg font-bold text-white flex items-center gap-2">
                 <span>🚩</span> Report Stranger
               </h2>
               <button
                 type="button"
                 onClick={onClose}
+                aria-label="Close report dialog"
                 className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
               >
                 ✕

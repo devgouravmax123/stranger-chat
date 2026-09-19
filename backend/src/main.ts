@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { config } from 'dotenv';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
-import { AppModule } from './app.module.js';
+import { AppModule } from './app.module.js'; // active redis connection
 
 // Ensure backend/.env is loaded reliably regardless of working directory
 const candidateEnvPaths = [
@@ -22,8 +22,31 @@ for (const envPath of candidateEnvPaths) {
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  app.enableShutdownHooks();
+
+  const httpAdapter = app.getHttpAdapter().getInstance();
+  httpAdapter.disable('x-powered-by');
+
+  // Configure Express reverse-proxy IP trust safely:
+  // When TRUST_PROXY is provided (e.g. 'true', '1', 'loopback', or a CIDR), configure Express trust proxy.
+  // Otherwise, leave disabled (default: false) to prevent client IP spoofing via X-Forwarded-For.
+  const trustProxyEnv = process.env.TRUST_PROXY?.trim();
+  if (trustProxyEnv) {
+    const trustValue =
+      trustProxyEnv === 'true'
+        ? true
+        : trustProxyEnv === 'false'
+          ? false
+          : !isNaN(Number(trustProxyEnv))
+            ? Number(trustProxyEnv)
+            : trustProxyEnv;
+    httpAdapter.set('trust proxy', trustValue);
+  }
+
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+
   app.enableCors({
-    origin: 'http://localhost:3000',
+    origin: frontendUrl,
   });
 
   app.useGlobalPipes(

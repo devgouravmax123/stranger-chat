@@ -8,6 +8,7 @@ import { PrismaService } from '../prisma.service.js';
 
 import { CreateProfileDto } from './dto/create-profile.dto.js';
 import { UpdatePreferencesDto } from './dto/update-preferences.dto.js';
+import { normalizeInterest } from '../constants/interests.js';
 import { RedisService } from '../redis/redis.service.js';
 
 @Injectable()
@@ -21,6 +22,10 @@ export class UsersService {
 
   registerDeletionHook(hook: (userId: string) => Promise<void>) {
     this.deletionHook = hook;
+  }
+
+  async createAnonymousUser() {
+    return this.prisma.user.create({ data: {} });
   }
 
   // ==========================================
@@ -69,25 +74,34 @@ export class UsersService {
     // UPDATE BASIC PROFILE
     // ==========================================
 
+    const profileData: any = {
+      username: dto.username.trim(),
+      age: dto.age,
+      gender: dto.gender.trim(),
+      avatar: dto.avatar?.trim() || null,
+    };
+
+    if (Array.isArray(dto.interests)) {
+      profileData.interests = dto.interests
+        .filter((i): i is string => typeof i === 'string')
+        .map((i) => normalizeInterest(i))
+        .filter((i) => i.length > 0);
+    }
+
+    if (dto.language !== undefined && typeof dto.language === 'string') {
+      profileData.language = dto.language.trim();
+    }
+
+    if (dto.goal !== undefined && typeof dto.goal === 'string') {
+      profileData.goal = dto.goal.trim();
+    }
+
     return this.prisma.user.update({
       where: {
         id: userId,
       },
 
-      data: {
-        username:
-          dto.username.trim(),
-
-        age:
-          dto.age,
-
-        gender:
-          dto.gender.trim(),
-
-        avatar:
-          dto.avatar?.trim() ||
-          null,
-      },
+      data: profileData,
 
       select: {
         id: true,
@@ -124,14 +138,15 @@ export class UsersService {
     }
 
     // ==========================================
-    // CLEAN INTERESTS
+    // CLEAN & NORMALIZE INTERESTS
     // ==========================================
 
     const cleanInterests =
       Array.isArray(dto.interests)
         ? dto.interests
+            .filter((interest): interest is string => typeof interest === 'string')
             .map((interest) =>
-              interest.trim(),
+              normalizeInterest(interest),
             )
             .filter(
               (interest) =>

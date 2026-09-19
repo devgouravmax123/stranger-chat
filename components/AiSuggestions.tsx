@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { BACKEND_URL } from "@/lib/api-config";
 
 type MessageLike = {
   sender: string;
@@ -136,7 +137,7 @@ export default function AiSuggestions({
 
     try {
       const response = await fetch(
-        "http://localhost:3001/ai/conversation-suggestions",
+        `${BACKEND_URL}/ai/conversation-suggestions`,
         {
           method: "POST",
           headers: {

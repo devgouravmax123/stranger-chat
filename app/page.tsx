@@ -21,6 +21,9 @@ import IncomingCallModal from "@/components/IncomingCallModal";
 import CallingModal from "@/components/CallingModal";
 import VideoCallOverlay from "@/components/VideoCallOverlay";
 import { useVideoCall } from "@/hooks/useVideoCall";
+import { blobToDataUrl } from "@/lib/audioConverter";
+import { CANONICAL_INTERESTS, CANONICAL_GOALS } from "@/lib/interests";
+import { BACKEND_URL } from "@/lib/api-config";
 
 // ==========================================
 // NAVIGATION & VIEW TYPES
@@ -145,15 +148,9 @@ export default function Home() {
   const [language, setLanguage] = useState("English");
   const [interests, setInterests] = useState<string[]>([]);
   const [goal, setGoal] = useState("casual-chat");
+  const [savingPreferences, setSavingPreferences] = useState(false);
 
-  const availableInterests = [
-    "Coding",
-    "Gaming",
-    "Music",
-    "Movies",
-    "Sports",
-    "Travel",
-  ];
+  const availableInterests = CANONICAL_INTERESTS;
 
   // ==========================================
   // STRANGER CHAT STATE
@@ -244,6 +241,7 @@ export default function Home() {
     roomId: strangerRoomId,
     userId,
     strangerUserId,
+    chatType: "stranger",
     onNotification: showNotification,
   });
 
@@ -260,6 +258,7 @@ export default function Home() {
     roomId: friendRoomId,
     userId,
     strangerUserId: selectedFriend?.id || null,
+    chatType: "friend",
     onNotification: showNotification,
   });
 
@@ -360,8 +359,10 @@ export default function Home() {
       }
     }
 
-    const newSocket = io("http://localhost:3001", {
-      auth: { userId: savedUserId },
+    const savedToken = typeof window !== "undefined" ? sessionStorage.getItem("sc_session_token") : null;
+
+    const newSocket = io(BACKEND_URL, {
+      auth: { userId: savedUserId, token: savedToken },
     });
 
     setSocket(newSocket);
@@ -370,20 +371,23 @@ export default function Home() {
     // USER READY & SESSION
     // ==========================================
 
-    newSocket.on("user_ready", async (data: UserReadyData) => {
+    newSocket.on("user_ready", async (data: UserReadyData & { token?: string }) => {
       setUserId(data.userId);
       userIdRef.current = data.userId;
       if (typeof window !== "undefined") {
-        sessionStorage.setItem("sc_user_id", data.userId);
+        localStorage.setItem("sc_last_user_id", data.userId);
         sessionStorage.setItem("sc_session_user_id", data.userId);
+        if (data.token) {
+          sessionStorage.setItem("sc_session_token", data.token);
+        }
       }
       newSocket.emit("friend_online", { userId: data.userId });
 
       // Load persistent notifications for user
       try {
         const [resNotifs, resCount] = await Promise.all([
-          fetch(`http://localhost:3001/notifications/${data.userId}`),
-          fetch(`http://localhost:3001/notifications/${data.userId}/unread-count`),
+          fetch(`${BACKEND_URL}/notifications/${data.userId}`),
+          fetch(`${BACKEND_URL}/notifications/${data.userId}/unread-count`),
         ]);
         if (resNotifs.ok) {
           const notifs = await resNotifs.json();
@@ -399,7 +403,7 @@ export default function Home() {
 
       // Check if user already has a completed profile in DB
       try {
-        const res = await fetch(`http://localhost:3001/users/${data.userId}/profile`);
+        const res = await fetch(`${BACKEND_URL}/users/${data.userId}/profile`);
         if (res.ok) {
           const profile = await res.json();
           if (profile && profile.username) {
@@ -583,6 +587,10 @@ export default function Home() {
       );
     });
 
+    newSocket.on("voice_message_error", (data: { clientId?: string; message?: string }) => {
+      showNotification(data.message || "Voice note couldn't be sent. Please try again.");
+    });
+
     newSocket.on(
       "receive_message",
       (data: {
@@ -715,31 +723,74 @@ export default function Home() {
     // ==========================================
 
     newSocket.on("new_notification", (notif: any) => {
-      setNotifications((prev) => [
-        {
-          id: notif.id || `temp-${Date.now()}`,
-          type: notif.type,
-          title: notif.title,
-          body: notif.body,
-          data: typeof notif.data === "object" ? JSON.stringify(notif.data) : notif.data,
-          isRead: false,
-          createdAt: notif.createdAt || new Date().toISOString(),
-        },
-        ...prev,
-      ]);
-      setUnreadNotificationsCount((prev) => prev + 1);
-      showNotification(`🔔 ${notif.title}: ${notif.body}`);
+      if (!notif || typeof notif !== "object" || typeof notif.type !== "string") {
+        return;
+      }
+
+      // Determine if this message belongs to the currently active, visible conversation
+      let parsedData: any = null;
+      if (typeof notif.data === "object") {
+        parsedData = notif.data;
+      } else if (typeof notif.data === "string") {
+        try {
+          parsedData = JSON.parse(notif.data);
+        } catch {}
+      }
+
+      const isCurrentFriendChatOpen =
+        currentViewRef.current === "friend-chat" &&
+        Boolean(
+          (parsedData?.friendId && selectedFriendRef.current?.id === parsedData.friendId) ||
+          (parsedData?.chatId && friendChatIdRef.current === parsedData.chatId) ||
+          (parsedData?.roomId && friendRoomIdRef.current === parsedData.roomId)
+        );
+
+      const isCurrentStrangerChatOpen =
+        currentViewRef.current === "stranger-chat" &&
+        Boolean(parsedData?.roomId && strangerRoomIdRef.current === parsedData.roomId);
+
+      const isActiveOpenConversation =
+        notif.type === "NEW_MESSAGE" && (isCurrentFriendChatOpen || isCurrentStrangerChatOpen);
+
+      // Add to notifications list: if active open conversation, mark already read
+      const newNotifItem = {
+        id: notif.id || `temp-${Date.now()}`,
+        type: notif.type,
+        title: notif.title || "Notification",
+        body: notif.body || "",
+        data: typeof notif.data === "object" ? JSON.stringify(notif.data) : notif.data,
+        isRead: isActiveOpenConversation,
+        createdAt: notif.createdAt || new Date().toISOString(),
+      };
+
+      setNotifications((prev) => [newNotifItem, ...prev]);
+
+      if (isActiveOpenConversation) {
+        // Active conversation: user is already reading it in real time
+        // Persist read state in DB if not a temporary ID
+        if (notif.id && !notif.id.startsWith("temp-") && userIdRef.current) {
+          fetch(`${BACKEND_URL}/notifications/${notif.id}/read`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ userId: userIdRef.current }),
+          }).catch(() => {});
+        }
+      } else {
+        // Different conversation or user is on another screen: increment unread & display toast
+        setUnreadNotificationsCount((prev) => prev + 1);
+        showNotification(`🔔 ${notif.title || "Alert"}: ${notif.body || ""}`);
+      }
 
       if (userIdRef.current) {
         if (notif.type === "FRIEND_REQUEST") {
-          fetch(`http://localhost:3001/friends/requests/${userIdRef.current}`)
+          fetch(`${BACKEND_URL}/friends/requests/${userIdRef.current}`)
             .then((r) => (r.ok ? r.json() : null))
             .then((data) => {
               if (data) setFriendRequests(data);
             })
             .catch(() => {});
         } else if (notif.type === "FRIEND_ACCEPTED") {
-          fetch(`http://localhost:3001/friends/${userIdRef.current}`)
+          fetch(`${BACKEND_URL}/friends/${userIdRef.current}`)
             .then((r) => (r.ok ? r.json() : null))
             .then((data) => {
               if (data) setFriends(data);
@@ -748,6 +799,23 @@ export default function Home() {
         }
       }
     });
+
+    newSocket.on(
+      "notifications_read",
+      (data: { readIds?: string[]; unreadCount: number }) => {
+        if (data.readIds && data.readIds.length > 0) {
+          const idSet = new Set(data.readIds);
+          setNotifications((prev) =>
+            prev.map((n) => (idSet.has(n.id) ? { ...n, isRead: true } : n))
+          );
+        } else {
+          setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
+        }
+        if (typeof data.unreadCount === "number") {
+          setUnreadNotificationsCount(data.unreadCount);
+        }
+      }
+    );
 
     // ==========================================
     // SAFETY & RATE LIMITING
@@ -833,6 +901,7 @@ export default function Home() {
 
     newSocket.on("receive_friend_message", (data: {
       id: string;
+      clientId?: string;
       text: string;
       senderId: string;
       timestamp: number;
@@ -850,6 +919,7 @@ export default function Home() {
 
       const newMsg: Message = {
         id: data.id,
+        clientId: data.clientId,
         text: isImage
           ? data.text || "Photo message"
           : isAudio
@@ -864,7 +934,19 @@ export default function Home() {
         replyTo: data.replyTo,
       };
 
-      setFriendMessages((prev) => [...prev, newMsg]);
+      setFriendMessages((prev) => {
+        if (data.clientId) {
+          const exists = prev.some((m) => m.clientId === data.clientId);
+          if (exists) {
+            return prev.map((m) =>
+              m.clientId === data.clientId
+                ? { ...m, id: data.id, status: "delivered", timestamp: data.timestamp }
+                : m
+            );
+          }
+        }
+        return [...prev, newMsg];
+      });
 
       // If in friend video call and chat drawer is closed, increment unread counter
       if (isFriendVideoCallActiveRef.current && !isFriendVideoChatOpenRef.current) {
@@ -884,6 +966,20 @@ export default function Home() {
       }
     });
 
+    newSocket.on("friend_message_sent", (data: { id: string; clientId?: string; status: string }) => {
+      setFriendMessages((prev) =>
+        prev.map((msg) =>
+          data.clientId && msg.clientId === data.clientId
+            ? { ...msg, id: data.id, status: "sent" }
+            : msg
+        )
+      );
+    });
+
+    newSocket.on("friend_voice_error", (data: { clientId?: string; message?: string }) => {
+      showNotification(data.message || "Voice note couldn't be sent. Please try again.");
+    });
+
     newSocket.on("friend_room_error", (data: { message: string }) => {
       setFriendChatLoading(false);
       setFriendsError(data.message || "Could not open private chat");
@@ -898,27 +994,35 @@ export default function Home() {
       callerAvatar?: string;
       chatType?: string;
     }) => {
-      if (data.chatType === "friend" && data.roomId.startsWith("friend-")) {
-        const isBusyInCall = isVideoCallActiveRef.current || isFriendVideoCallActiveRef.current;
-        if (isBusyInCall) {
-          // Genuinely busy on an active video call
-          newSocket.emit("video_call_declined", {
-            roomId: data.roomId,
-            callId: data.callId,
-            reason: "busy",
-          });
-          return;
-        }
+      // STRICT VALIDATION: Must be an explicit valid friend video call payload
+      if (!data || typeof data !== "object") return;
+      if (typeof data.roomId !== "string" || !data.roomId.startsWith("friend-")) return;
+      if (typeof data.callId !== "string" || !data.callId.trim()) return;
+      if (typeof data.callerUserId !== "string" || !data.callerUserId.trim()) return;
+      if (data.chatType !== "friend") return;
 
-        if (currentViewRef.current !== "friend-chat" || friendRoomIdRef.current !== data.roomId) {
-          setGlobalIncomingFriendCall({
-            roomId: data.roomId,
-            callId: data.callId,
-            callerUserId: data.callerUserId,
-            callerName: data.callerName || "Friend",
-            callerAvatar: data.callerAvatar || "👤",
-          });
-        }
+      // Ignore calls from ourselves
+      if (userIdRef.current && data.callerUserId === userIdRef.current) return;
+
+      const isBusyInCall = isVideoCallActiveRef.current || isFriendVideoCallActiveRef.current;
+      if (isBusyInCall) {
+        // Genuinely busy on an active video call
+        newSocket.emit("video_call_declined", {
+          roomId: data.roomId,
+          callId: data.callId,
+          reason: "busy",
+        });
+        return;
+      }
+
+      if (currentViewRef.current !== "friend-chat" || friendRoomIdRef.current !== data.roomId) {
+        setGlobalIncomingFriendCall({
+          roomId: data.roomId,
+          callId: data.callId,
+          callerUserId: data.callerUserId,
+          callerName: data.callerName || "Friend",
+          callerAvatar: data.callerAvatar || "👤",
+        });
       }
     });
 
@@ -1005,11 +1109,29 @@ export default function Home() {
     setMatchingMode("searching");
 
     try {
-      await fetch(`http://localhost:3001/users/${userId}/preferences`, {
+      const token = typeof window !== "undefined" ? sessionStorage.getItem("sc_session_token") : null;
+      const prefRes = await fetch(`${BACKEND_URL}/users/${userId}/preferences`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify(preferences),
       });
+
+      if (prefRes.ok) {
+        const prefData = await prefRes.json();
+        setCurrentUserProfile((prev) =>
+          prev
+            ? {
+                ...prev,
+                language: prefData.language || language,
+                interests: prefData.interests || interests,
+                goal: prefData.goal || goal,
+              }
+            : null
+        );
+      }
 
       setMessages([]);
       setReplyingTo(null);
@@ -1044,6 +1166,47 @@ export default function Home() {
     }
   };
 
+  const handleSavePreferences = async () => {
+    if (!userId) return;
+    setSavingPreferences(true);
+    try {
+      const token = typeof window !== "undefined" ? sessionStorage.getItem("sc_session_token") : null;
+      const res = await fetch(`${BACKEND_URL}/users/${userId}/preferences`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          language,
+          interests,
+          goal,
+        }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setCurrentUserProfile((prev) =>
+          prev
+            ? {
+                ...prev,
+                language: updated.language || language,
+                interests: updated.interests || interests,
+                goal: updated.goal || goal,
+              }
+            : null
+        );
+        showNotification("Match preferences saved!");
+      } else {
+        showNotification("Failed to save preferences.");
+      }
+    } catch (e) {
+      console.warn("Could not save preferences:", e);
+      showNotification("Could not connect to server.");
+    } finally {
+      setSavingPreferences(false);
+    }
+  };
+
   // FEATURE 1: Skip / Next Stranger
   const handleNextStranger = () => {
     videoCall.teardownCall();
@@ -1066,7 +1229,7 @@ export default function Home() {
     setSearchElapsedSeconds(0);
     setMatchingMode("searching");
 
-    socket.emit("next_stranger");
+    socket.emit("next_stranger", { language, interests, goal });
 
     searchTimerRef.current = setInterval(() => {
       setSearchElapsedSeconds((prev) => prev + 1);
@@ -1163,44 +1326,61 @@ export default function Home() {
     socket.emit("stop_typing");
   };
 
-  const sendStrangerVoice = (audioBlob: Blob) => {
-    if (!socket) return;
+  const sendStrangerVoice = async (audioBlob: Blob) => {
+    if (!socket || strangerStatus === "disconnected") {
+      showNotification("Voice note couldn't be sent. Please try again.");
+      return;
+    }
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const result = reader.result;
-      if (typeof result !== "string") return;
+    if (!audioBlob || audioBlob.size === 0) {
+      showNotification("Your voice note could not be recorded. Please try again.");
+      return;
+    }
 
-      const clientId = `client-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    let dataUrl: string;
+    try {
+      dataUrl = await blobToDataUrl(audioBlob);
+    } catch (err) {
+      console.error("[VoiceNote] Failed to convert Blob to Data URL:", err);
+      showNotification("Your voice note could not be prepared. Please try again.");
+      return;
+    }
 
-      const optimisticMsg: Message = {
-        id: clientId,
-        clientId,
-        text: "Voice message",
-        sender: "me",
-        timestamp: Date.now(),
-        type: "audio",
-        audioUrl: result,
-        status: "sending",
-        replyTo: replyingTo
-          ? {
-              id: replyingTo.id,
-              text: replyingTo.text,
-              type: replyingTo.type,
-            }
-          : null,
-      };
+    if (!dataUrl || !dataUrl.startsWith("data:audio/")) {
+      showNotification("Your voice note could not be prepared. Please try again.");
+      return;
+    }
 
-      setMessages((prev) => [...prev, optimisticMsg]);
-      setReplyingTo(null);
+    // Capture conversation context snapshot
+    const targetReplyingTo = replyingTo;
+    const clientId = `client-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
-      socket.emit("send_voice_message", {
-        audioData: result,
-        clientId,
-        replyToId: replyingTo?.id,
-      });
+    const optimisticMsg: Message = {
+      id: clientId,
+      clientId,
+      text: "Voice message",
+      sender: "me",
+      timestamp: Date.now(),
+      type: "audio",
+      audioUrl: dataUrl,
+      status: "sending",
+      replyTo: targetReplyingTo
+        ? {
+            id: targetReplyingTo.id,
+            text: targetReplyingTo.text,
+            type: targetReplyingTo.type,
+          }
+        : null,
     };
-    reader.readAsDataURL(audioBlob);
+
+    setMessages((prev) => [...prev, optimisticMsg]);
+    setReplyingTo(null);
+
+    socket.emit("send_voice_message", {
+      audioData: dataUrl,
+      clientId,
+      replyToId: targetReplyingTo?.id,
+    });
   };
 
   const sendStrangerImage = (imageDataUrl: string) => {
@@ -1343,7 +1523,7 @@ export default function Home() {
     try {
       setFriendsLoading(true);
       setFriendsError("");
-      const res = await fetch(`http://localhost:3001/friends/${userId}`);
+      const res = await fetch(`${BACKEND_URL}/friends/${userId}`);
       if (!res.ok) throw new Error("Failed to load friends");
       const data: Friendship[] = await res.json();
       setFriends(data);
@@ -1358,7 +1538,7 @@ export default function Home() {
   const loadFriendRequests = async () => {
     if (!userId) return;
     try {
-      const res = await fetch(`http://localhost:3001/friends/requests/${userId}`);
+      const res = await fetch(`${BACKEND_URL}/friends/requests/${userId}`);
       if (!res.ok) throw new Error("Failed to load friend requests");
       const data: FriendRequest[] = await res.json();
       setFriendRequests(data);
@@ -1371,8 +1551,8 @@ export default function Home() {
     if (!userId) return;
     try {
       const [resNotifs, resCount] = await Promise.all([
-        fetch(`http://localhost:3001/notifications/${userId}`),
-        fetch(`http://localhost:3001/notifications/${userId}/unread-count`),
+        fetch(`${BACKEND_URL}/notifications/${userId}`),
+        fetch(`${BACKEND_URL}/notifications/${userId}/unread-count`),
       ]);
       if (resNotifs.ok) {
         const data = await resNotifs.json();
@@ -1390,7 +1570,7 @@ export default function Home() {
   const markNotificationAsRead = async (id: string) => {
     if (!userId) return;
     try {
-      await fetch(`http://localhost:3001/notifications/${id}/read`, {
+      await fetch(`${BACKEND_URL}/notifications/${id}/read`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId }),
@@ -1407,13 +1587,78 @@ export default function Home() {
   const markAllNotificationsAsRead = async () => {
     if (!userId) return;
     try {
-      await fetch(`http://localhost:3001/notifications/user/${userId}/read-all`, {
+      await fetch(`${BACKEND_URL}/notifications/user/${userId}/read-all`, {
         method: "PUT",
       });
       setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
       setUnreadNotificationsCount(0);
     } catch (err) {
       console.warn("Could not mark all notifications read:", err);
+    }
+  };
+
+  const handleOpenNotifications = async () => {
+    if (!userId) return;
+
+    // Identify currently displayed unread notifications at the moment of opening
+    const unreadNotifs = notifications.filter((n) => !n.isRead);
+    const unreadIds = unreadNotifs.map((n) => n.id);
+
+    // If there are no unread notifications visible and count is 0, nothing to mark
+    if (unreadIds.length === 0 && unreadNotificationsCount === 0) {
+      return;
+    }
+
+    // Capture previous state snapshot for rollback on error
+    const prevNotifications = [...notifications];
+    const prevCount = unreadNotificationsCount;
+
+    // 1. Immediate optimistic UI update:
+    // Mark identified unread notifications as read immediately so badge clears without delay
+    if (unreadIds.length > 0) {
+      setNotifications((prev) =>
+        prev.map((n) => (unreadIds.includes(n.id) ? { ...n, isRead: true } : n))
+      );
+      setUnreadNotificationsCount((prev) => Math.max(0, prev - unreadIds.length));
+    } else {
+      setUnreadNotificationsCount(0);
+    }
+
+    // 2. Persist to backend database via bulk endpoint
+    try {
+      const dbIds = unreadIds.filter((id) => id && !id.startsWith("temp-"));
+      let res: Response;
+      if (dbIds.length > 0) {
+        res = await fetch(
+          `${BACKEND_URL}/notifications/user/${userId}/read-bulk`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ notificationIds: dbIds }),
+          }
+        );
+      } else {
+        res = await fetch(
+          `${BACKEND_URL}/notifications/user/${userId}/read-all`,
+          {
+            method: "PUT",
+          }
+        );
+      }
+
+      if (!res.ok) {
+        throw new Error(`Failed to mark notifications read (status: ${res.status})`);
+      }
+
+      const data = await res.json();
+      if (typeof data.count === "number") {
+        setUnreadNotificationsCount(data.count);
+      }
+    } catch (err) {
+      console.warn("Could not mark opened notifications as read:", err);
+      // Rollback to consistent state on network failure
+      setNotifications(prevNotifications);
+      setUnreadNotificationsCount(prevCount);
     }
   };
 
@@ -1544,21 +1789,64 @@ export default function Home() {
     setFriendReplyingTo(null);
   };
 
-  const sendFriendVoice = (audioBlob: Blob) => {
-    if (!socket || !friendRoomId) return;
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const result = reader.result;
-      if (typeof result !== "string") return;
+  const sendFriendVoice = async (audioBlob: Blob) => {
+    if (!socket || !friendRoomId) {
+      showNotification("Voice note couldn't be sent. Please try again.");
+      return;
+    }
 
-      socket.emit("send_friend_voice_message", {
-        roomId: friendRoomId,
-        audioData: result,
-        replyToId: friendReplyingTo?.id,
-      });
-      setFriendReplyingTo(null);
+    if (!audioBlob || audioBlob.size === 0) {
+      showNotification("Your voice note could not be recorded. Please try again.");
+      return;
+    }
+
+    let dataUrl: string;
+    try {
+      dataUrl = await blobToDataUrl(audioBlob);
+    } catch (err) {
+      console.error("[FriendVoiceNote] Failed to convert Blob to Data URL:", err);
+      showNotification("Your voice note could not be prepared. Please try again.");
+      return;
+    }
+
+    if (!dataUrl || !dataUrl.startsWith("data:audio/")) {
+      showNotification("Your voice note could not be prepared. Please try again.");
+      return;
+    }
+
+    // Capture conversation context snapshot
+    const targetReplyingTo = friendReplyingTo;
+    const targetRoomId = friendRoomId;
+    const clientId = `client-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+    const optimisticMsg: Message = {
+      id: clientId,
+      clientId,
+      text: "Voice message",
+      sender: "me",
+      timestamp: Date.now(),
+      type: "audio",
+      audioUrl: dataUrl,
+      status: "sending",
+      replyTo: targetReplyingTo
+        ? {
+            id: targetReplyingTo.id,
+            text: targetReplyingTo.text,
+            type: targetReplyingTo.type,
+          }
+        : null,
     };
-    reader.readAsDataURL(audioBlob);
+
+    setFriendMessages((prev) => [...prev, optimisticMsg]);
+    setFriendReplyingTo(null);
+
+    socket.emit("send_friend_voice_message", {
+      roomId: targetRoomId,
+      senderId: userId,
+      clientId,
+      audioData: dataUrl,
+      replyToId: targetReplyingTo?.id,
+    });
   };
 
   const sendFriendImage = (imageDataUrl: string) => {
@@ -1577,7 +1865,7 @@ export default function Home() {
     if (!userId || !strangerUserId) return;
     try {
       setFriendRequestMessage("");
-      const res = await fetch("http://localhost:3001/friends/request", {
+      const res = await fetch(`${BACKEND_URL}/friends/request`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ senderId: userId, receiverId: strangerUserId }),
@@ -1593,7 +1881,7 @@ export default function Home() {
   const acceptFriendRequest = async (requestId: string) => {
     if (!userId) return;
     try {
-      await fetch(`http://localhost:3001/friends/request/${requestId}/accept`, {
+      await fetch(`${BACKEND_URL}/friends/request/${requestId}/accept`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId }),
@@ -1607,7 +1895,7 @@ export default function Home() {
   const rejectFriendRequest = async (requestId: string) => {
     if (!userId) return;
     try {
-      await fetch(`http://localhost:3001/friends/request/${requestId}/reject`, {
+      await fetch(`${BACKEND_URL}/friends/request/${requestId}/reject`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId }),
@@ -1626,7 +1914,7 @@ export default function Home() {
         setIsFriendVideoChatOpen(false);
         setUnreadFriendVideoChatCount(0);
       }
-      await fetch(`http://localhost:3001/friends/${userId}/${friendId}`, {
+      await fetch(`${BACKEND_URL}/friends/${userId}/${friendId}`, {
         method: "DELETE",
       });
       await loadFriends();
@@ -1640,7 +1928,7 @@ export default function Home() {
     try {
       setProfileLoading(true);
       setProfileError("");
-      const res = await fetch(`http://localhost:3001/users/${targetUserId}/profile`);
+      const res = await fetch(`${BACKEND_URL}/users/${targetUserId}/profile`);
       if (!res.ok) throw new Error("Failed to load profile");
       const data = await res.json();
       setViewProfile(data);
@@ -1664,8 +1952,12 @@ export default function Home() {
       setIsFriendVideoChatOpen(false);
       setUnreadVideoChatCount(0);
       setUnreadFriendVideoChatCount(0);
-      const res = await fetch(`http://localhost:3001/users/${userId}/account`, {
+      const token = typeof window !== "undefined" ? sessionStorage.getItem("sc_session_token") : null;
+      const res = await fetch(`${BACKEND_URL}/users/${userId}/account`, {
         method: "DELETE",
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
       });
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
@@ -1681,6 +1973,7 @@ export default function Home() {
       if (typeof window !== "undefined") {
         sessionStorage.removeItem("sc_user_id");
         sessionStorage.removeItem("sc_session_user_id");
+        sessionStorage.removeItem("sc_session_token");
         localStorage.removeItem("sc_user_id");
         localStorage.removeItem("sc_session_user_id");
       }
@@ -1727,11 +2020,8 @@ export default function Home() {
       <main className="min-h-screen relative flex items-center justify-center p-4 bg-[#030308] overflow-hidden">
         <GalaxyBackground />
         <div className="relative z-10 w-full max-w-md bg-zinc-900/90 backdrop-blur-md border border-zinc-800 rounded-3xl p-8 shadow-2xl text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 mx-auto text-xl font-bold shadow-lg shadow-indigo-600/20">
-            ⚡
-          </div>
-          <h1 className="text-xl font-bold text-white mt-4">
-            Chat<span className="text-indigo-400">Buddy</span>
+          <h1 className="text-2xl font-bold text-white tracking-tight">
+            Chi<span className="text-indigo-400">rp</span>
           </h1>
           <p className="mt-2 text-xs text-zinc-400">Loading your profile & connecting...</p>
           <div className="mt-6">
@@ -1817,6 +2107,13 @@ export default function Home() {
         onImageSelected={sendFriendImage}
         replyingTo={friendReplyingTo}
         onCancelReply={() => setFriendReplyingTo(null)}
+        isVoiceDisabled={
+          friendVideoCall.callState === "connecting" ||
+          friendVideoCall.callState === "connected" ||
+          videoCall.callState === "connecting" ||
+          videoCall.callState === "connected"
+        }
+        voiceDisabledReason="Voice notes are disabled during an active video call."
       />
     </div>
   );
@@ -1860,6 +2157,13 @@ export default function Home() {
         onTypingStart={handleTypingStart}
         onTypingStop={handleTypingStop}
         disabled={strangerStatus === "disconnected"}
+        isVoiceDisabled={
+          videoCall.callState === "connecting" ||
+          videoCall.callState === "connected" ||
+          friendVideoCall.callState === "connecting" ||
+          friendVideoCall.callState === "connected"
+        }
+        voiceDisabledReason="Voice notes are disabled during an active video call."
       />
     </div>
   );
@@ -1894,6 +2198,7 @@ export default function Home() {
           onMarkNotificationAsRead={markNotificationAsRead}
           onMarkAllNotificationsAsRead={markAllNotificationsAsRead}
           onSelectNotification={handleSelectNotification}
+          onOpenNotifications={handleOpenNotifications}
         />
       </div>
 
@@ -2254,6 +2559,8 @@ export default function Home() {
               }}
               onAcceptRequest={acceptFriendRequest}
               showNotification={showNotification}
+              searchQuery={searchQuery}
+              onSearchQueryChange={setSearchQuery}
             />
           )}
 
@@ -2323,7 +2630,7 @@ export default function Home() {
                   {matchScore !== null && (
                     <div className="text-center py-1.5 bg-zinc-950/80 text-xs font-semibold text-zinc-400 border-b border-zinc-800/80">
                       Match compatibility:{" "}
-                      <span className="text-indigo-400 font-bold">{matchScore.toFixed(0)}%</span>
+                      <span className="text-indigo-400 font-bold">{Math.round(matchScore)}%</span>
                     </div>
                   )}
 
@@ -2374,11 +2681,6 @@ export default function Home() {
           {currentView === "matching" && (
             <div className="flex-1 flex flex-col items-center justify-center p-4 sm:p-8">
               <div className="w-full max-w-lg bg-zinc-900/90 backdrop-blur-md border border-zinc-800/90 rounded-3xl p-6 sm:p-8 shadow-2xl text-zinc-100">
-                <div className="flex items-center justify-center gap-2 mb-2">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-indigo-600 text-white text-xl font-bold shadow-lg shadow-indigo-600/30">
-                    ⚡
-                  </span>
-                </div>
                 <h1 className="text-2xl sm:text-3xl font-extrabold text-white text-center tracking-tight">
                   Stranger Chat
                 </h1>
@@ -2404,10 +2706,12 @@ export default function Home() {
 
                 {/* Language selection */}
                 <div className="mt-5">
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">
+                  <label htmlFor="pref-language" className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">
                     Language
                   </label>
                   <select
+                    id="pref-language"
+                    aria-label="Language"
                     value={language}
                     onChange={(e) => setLanguage(e.target.value)}
                     className="w-full border border-zinc-800 bg-zinc-950 rounded-2xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500 transition"
@@ -2446,19 +2750,39 @@ export default function Home() {
 
                 {/* Match Goal */}
                 <div className="mt-5">
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">
+                  <label htmlFor="pref-goal" className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">
                     What are you looking for?
                   </label>
                   <select
+                    id="pref-goal"
+                    aria-label="What are you looking for?"
                     value={goal}
                     onChange={(e) => setGoal(e.target.value)}
                     className="w-full border border-zinc-800 bg-zinc-950 rounded-2xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500 transition"
                   >
-                    <option value="casual-chat">Casual Chat</option>
-                    <option value="friendship">Friendship</option>
-                    <option value="learning">Language & Learning</option>
-                    <option value="networking">Networking</option>
+                    {CANONICAL_GOALS.map((g) => (
+                      <option key={g.value} value={g.value}>
+                        {g.label}
+                      </option>
+                    ))}
                   </select>
+                </div>
+
+                {/* Save Preferences Button */}
+                <div className="mt-4 flex items-center justify-between pt-3 border-t border-zinc-800/80">
+                  <span className="text-[11px] text-zinc-500">
+                    Syncs to your profile &amp; sidebar
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleSavePreferences}
+                    disabled={savingPreferences}
+                    className="px-3.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white border border-zinc-700/60 text-xs font-semibold transition active:scale-95 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer shadow-xs"
+                    title="Save your current language, interests, and goal"
+                  >
+                    <span>💾</span>
+                    <span>{savingPreferences ? "Saving..." : "Save Preferences"}</span>
+                  </button>
                 </div>
 
                 {/* Action / Matchmaking States */}
@@ -2481,7 +2805,7 @@ export default function Home() {
                         No one is live right now
                       </h3>
                       <p className="mt-1.5 text-xs text-zinc-400 leading-relaxed max-w-sm mx-auto">
-                        There isn&apos;t a stranger available at the moment. You can keep waiting for someone to come online, or discover people already on ChatBuddy.
+                        There isn&apos;t a stranger available at the moment. You can keep waiting for someone to come online, or discover people already on Chirp.
                       </p>
                     </div>
 
@@ -2566,7 +2890,7 @@ export default function Home() {
                         </span>
                       </h2>
                       <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
-                        Looking for lasting connections? Browse real ChatBuddy members, search by interests, filter by gender or online status, and chat privately anytime.
+                        Looking for lasting connections? Browse real Chirp members, search by interests, filter by gender or online status, and chat privately anytime.
                       </p>
                     </div>
                   </div>
@@ -2594,6 +2918,15 @@ export default function Home() {
         onClose={() => setIsEditProfileOpen(false)}
         onSave={(updatedProfile) => {
           setCurrentUserProfile(updatedProfile);
+          if (Array.isArray(updatedProfile.interests)) {
+            setInterests(updatedProfile.interests);
+          }
+          if (updatedProfile.language) {
+            setLanguage(updatedProfile.language);
+          }
+          if (updatedProfile.goal) {
+            setGoal(updatedProfile.goal);
+          }
           showNotification("Profile updated successfully!");
         }}
       />

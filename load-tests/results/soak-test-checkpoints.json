@@ -1,0 +1,378 @@
+[
+  {
+    "minute": 0,
+    "timestamp": "2026-09-18T17:44:43.811Z",
+    "activeSockets": 1000,
+    "totalMatches": 0,
+    "activeRooms": 0,
+    "queueLength": 1,
+    "rest": {
+      "totalRequests": 3,
+      "rps": 0.2,
+      "p50": 3,
+      "p95": 3,
+      "p99": 3,
+      "errorRatePercent": 0
+    },
+    "node": {
+      "pid": 17000,
+      "workingSetMB": 456,
+      "cpuSec": "43.3",
+      "eventLoopDelay": {
+        "p50": 6,
+        "p95": 11,
+        "p99": 15
+      }
+    },
+    "redis": {
+      "memory": "1.98M",
+      "commandsTotal": 228683,
+      "clients": 3,
+      "errors": 0
+    },
+    "db": {
+      "pingLatencyMs": 174,
+      "poolPressure": "Normal",
+      "poolTimeouts": 0
+    },
+    "messaging": {
+      "sent": 0,
+      "received": 0,
+      "deliveryPercent": 100
+    },
+    "matchAnomalies": {
+      "selfMatches": 0,
+      "duplicateMatches": 0,
+      "multiMatches": 0
+    }
+  },
+  {
+    "minute": 5,
+    "timestamp": "2026-09-18T17:49:35.276Z",
+    "activeSockets": 1000,
+    "totalMatches": 3202,
+    "activeRooms": 810,
+    "queueLength": 0,
+    "rest": {
+      "totalRequests": 578,
+      "rps": 1.9,
+      "p50": 15685,
+      "p95": 36103,
+      "p99": 46026,
+      "errorRatePercent": 0
+    },
+    "node": {
+      "pid": 17000,
+      "workingSetMB": 519,
+      "cpuSec": "90.4",
+      "eventLoopDelay": {
+        "p50": 7,
+        "p95": 12,
+        "p99": 14
+      }
+    },
+    "redis": {
+      "memory": "2.56M",
+      "commandsTotal": 303313,
+      "clients": 3,
+      "errors": 0
+    },
+    "db": {
+      "pingLatencyMs": 78,
+      "poolPressure": "Normal",
+      "poolTimeouts": 0
+    },
+    "messaging": {
+      "sent": 1252,
+      "received": 1039,
+      "deliveryPercent": 83
+    },
+    "matchAnomalies": {
+      "selfMatches": 0,
+      "duplicateMatches": 0,
+      "multiMatches": 0
+    }
+  },
+  {
+    "minute": 10,
+    "timestamp": "2026-09-18T17:54:30.906Z",
+    "activeSockets": 1000,
+    "totalMatches": 6668,
+    "activeRooms": 1602,
+    "queueLength": 1,
+    "rest": {
+      "totalRequests": 1161,
+      "rps": 1.9,
+      "p50": 21794,
+      "p95": 57138,
+      "p99": 66103,
+      "errorRatePercent": 0
+    },
+    "node": {
+      "pid": 17000,
+      "workingSetMB": 569,
+      "cpuSec": "144.5",
+      "eventLoopDelay": {
+        "p50": 7,
+        "p95": 12,
+        "p99": 14
+      }
+    },
+    "redis": {
+      "memory": "2.63M",
+      "commandsTotal": 379810,
+      "clients": 3,
+      "errors": 0
+    },
+    "db": {
+      "pingLatencyMs": 92,
+      "poolPressure": "Normal",
+      "poolTimeouts": 0
+    },
+    "messaging": {
+      "sent": 2503,
+      "received": 1975,
+      "deliveryPercent": 78.9
+    },
+    "matchAnomalies": {
+      "selfMatches": 0,
+      "duplicateMatches": 0,
+      "multiMatches": 0
+    }
+  },
+  {
+    "minute": 15,
+    "timestamp": "2026-09-18T17:59:35.682Z",
+    "activeSockets": 1000,
+    "totalMatches": 9787,
+    "activeRooms": 2128,
+    "queueLength": 1,
+    "rest": {
+      "totalRequests": 1761,
+      "rps": 1.9,
+      "p50": 30229,
+      "p95": 91220,
+      "p99": 105128,
+      "errorRatePercent": 0
+    },
+    "node": {
+      "pid": 17000,
+      "workingSetMB": 634,
+      "cpuSec": "203.2",
+      "eventLoopDelay": {
+        "p50": 7,
+        "p95": 12,
+        "p99": 15
+      }
+    },
+    "redis": {
+      "memory": "2.82M",
+      "commandsTotal": 459175,
+      "clients": 3,
+      "errors": 0
+    },
+    "db": {
+      "pingLatencyMs": 78,
+      "poolPressure": "Normal",
+      "poolTimeouts": 0
+    },
+    "messaging": {
+      "sent": 3511,
+      "received": 2816,
+      "deliveryPercent": 80.2
+    },
+    "matchAnomalies": {
+      "selfMatches": 0,
+      "duplicateMatches": 0,
+      "multiMatches": 0
+    }
+  },
+  {
+    "minute": 20,
+    "timestamp": "2026-09-18T18:04:27.655Z",
+    "activeSockets": 1000,
+    "totalMatches": 12122,
+    "activeRooms": 2758,
+    "queueLength": 1,
+    "rest": {
+      "totalRequests": 2337,
+      "rps": 1.9,
+      "p50": 44511,
+      "p95": 116325,
+      "p99": 129376,
+      "errorRatePercent": 0
+    },
+    "node": {
+      "pid": 17000,
+      "workingSetMB": 696,
+      "cpuSec": "262.1",
+      "eventLoopDelay": {
+        "p50": 7,
+        "p95": 12,
+        "p99": 14
+      }
+    },
+    "redis": {
+      "memory": "2.86M",
+      "commandsTotal": 534100,
+      "clients": 3,
+      "errors": 0
+    },
+    "db": {
+      "pingLatencyMs": 94,
+      "poolPressure": "Normal",
+      "poolTimeouts": 0
+    },
+    "messaging": {
+      "sent": 4418,
+      "received": 3456,
+      "deliveryPercent": 78.2
+    },
+    "matchAnomalies": {
+      "selfMatches": 0,
+      "duplicateMatches": 0,
+      "multiMatches": 0
+    }
+  },
+  {
+    "minute": 25,
+    "timestamp": "2026-09-18T18:09:31.299Z",
+    "activeSockets": 1000,
+    "totalMatches": 15219,
+    "activeRooms": 3471,
+    "queueLength": 1,
+    "rest": {
+      "totalRequests": 2936,
+      "rps": 1.9,
+      "p50": 81837,
+      "p95": 140160,
+      "p99": 142983,
+      "errorRatePercent": 0
+    },
+    "node": {
+      "pid": 17000,
+      "workingSetMB": 771,
+      "cpuSec": "328.0",
+      "eventLoopDelay": {
+        "p50": 7,
+        "p95": 12,
+        "p99": 14
+      }
+    },
+    "redis": {
+      "memory": "3.16M",
+      "commandsTotal": 618513,
+      "clients": 3,
+      "errors": 0
+    },
+    "db": {
+      "pingLatencyMs": 101,
+      "poolPressure": "Normal",
+      "poolTimeouts": 0
+    },
+    "messaging": {
+      "sent": 5572,
+      "received": 4070,
+      "deliveryPercent": 73
+    },
+    "matchAnomalies": {
+      "selfMatches": 0,
+      "duplicateMatches": 0,
+      "multiMatches": 0
+    }
+  },
+  {
+    "minute": 30,
+    "timestamp": "2026-09-18T18:14:32.811Z",
+    "activeSockets": 1000,
+    "totalMatches": 18040,
+    "activeRooms": 3923,
+    "queueLength": 1,
+    "rest": {
+      "totalRequests": 3531,
+      "rps": 2,
+      "p50": 112871,
+      "p95": 191973,
+      "p99": 196705,
+      "errorRatePercent": 0
+    },
+    "node": {
+      "pid": 17000,
+      "workingSetMB": 806,
+      "cpuSec": "398.5",
+      "eventLoopDelay": {
+        "p50": 7,
+        "p95": 12,
+        "p99": 15
+      }
+    },
+    "redis": {
+      "memory": "3.18M",
+      "commandsTotal": 692447,
+      "clients": 3,
+      "errors": 0
+    },
+    "db": {
+      "pingLatencyMs": 84,
+      "poolPressure": "Normal",
+      "poolTimeouts": 0
+    },
+    "messaging": {
+      "sent": 6733,
+      "received": 4927,
+      "deliveryPercent": 73.2
+    },
+    "matchAnomalies": {
+      "selfMatches": 0,
+      "duplicateMatches": 0,
+      "multiMatches": 0
+    }
+  },
+  {
+    "minute": 30,
+    "timestamp": "2026-09-18T18:14:33.753Z",
+    "activeSockets": 1000,
+    "totalMatches": 18081,
+    "activeRooms": 3935,
+    "queueLength": 0,
+    "rest": {
+      "totalRequests": 3532,
+      "rps": 2,
+      "p50": 112884,
+      "p95": 192343,
+      "p99": 196705,
+      "errorRatePercent": 0
+    },
+    "node": {
+      "pid": 17000,
+      "workingSetMB": 806,
+      "cpuSec": "398.8",
+      "eventLoopDelay": {
+        "p50": 7,
+        "p95": 12,
+        "p99": 15
+      }
+    },
+    "redis": {
+      "memory": "3.19M",
+      "commandsTotal": 693007,
+      "clients": 3,
+      "errors": 0
+    },
+    "db": {
+      "pingLatencyMs": 92,
+      "poolPressure": "Normal",
+      "poolTimeouts": 0
+    },
+    "messaging": {
+      "sent": 6733,
+      "received": 4930,
+      "deliveryPercent": 73.2
+    },
+    "matchAnomalies": {
+      "selfMatches": 0,
+      "duplicateMatches": 0,
+      "multiMatches": 0
+    }
+  }
+]

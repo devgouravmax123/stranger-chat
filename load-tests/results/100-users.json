@@ -1,0 +1,92 @@
+{
+  "tier": "100_users",
+  "concurrency": 100,
+  "duration": "60s",
+  "timestamp": "2026-09-17T13:05:40.731Z",
+  "runtime": {
+    "totalSeconds": 123.9,
+    "restPhaseSeconds": 62.2,
+    "socketPhaseSeconds": 61.6,
+    "teardownMs": 6
+  },
+  "restApi": {
+    "requests": 4700,
+    "requestsPerSecond": 76.3,
+    "latencyMs": {
+      "avg": 90.5,
+      "p50": 91.7,
+      "p95": 214.4,
+      "p99": 626.9
+    },
+    "failureRatePercent": 0,
+    "endpoints": [
+      {
+        "path": "GET /friends/discover",
+        "requests": 1914,
+        "avg": 121.7,
+        "p50": 100.1,
+        "p95": 226.7,
+        "p99": 506.4,
+        "failureRatePercent": 0
+      },
+      {
+        "path": "GET /friends/:userId",
+        "requests": 690,
+        "avg": 46.2,
+        "p50": 1.2,
+        "p95": 229.1,
+        "p99": 1044,
+        "failureRatePercent": 0
+      },
+      {
+        "path": "GET /users/:userId/profile",
+        "requests": 1164,
+        "avg": 124,
+        "p50": 96.4,
+        "p95": 269.8,
+        "p99": 679.5,
+        "failureRatePercent": 0
+      },
+      {
+        "path": "GET /notifications/:userId/unread-count",
+        "requests": 932,
+        "avg": 17.5,
+        "p50": 1.3,
+        "p95": 102.1,
+        "p99": 272,
+        "failureRatePercent": 0
+      }
+    ]
+  },
+  "realtimeSocketIo": {
+    "connectionCount": 100,
+    "connectionSuccessRatePercent": 100,
+    "connectionLatencyP95Ms": 48,
+    "matchmakingAttempts": 100,
+    "successfulMatches": 100,
+    "matchedPairsCount": 50,
+    "unmatchedUsers": 0,
+    "matchmakingSuccessRatePercent": 100,
+    "queueWaitLatencyMs": {
+      "avg": 4405.3,
+      "p50": 4386,
+      "p95": 4572,
+      "p99": 4732
+    },
+    "matchExecutionLatencyMs": {
+      "avg": 4380.3,
+      "p50": 4370,
+      "p95": 4484,
+      "p99": 4747
+    },
+    "messagesSent": 1181,
+    "messagesReceived": 892,
+    "deliveryDefinition": "Messages received by room counterpart via receive_message event during active session.",
+    "errors": {
+      "socketErrors": 0,
+      "connectErrors": 0,
+      "socketDisconnects": 0,
+      "totalErrors": 0
+    }
+  }
+}

@@ -54,6 +54,7 @@ export default function ChatHeader({
           <button
             type="button"
             onClick={onToggleSidebar}
+            aria-label="Toggle Sidebar Navigation (Chat)"
             className="h-8 w-8 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 hover:text-white flex items-center justify-center text-sm font-mono border border-zinc-700/50 transition active:scale-95 shrink-0"
             title="Toggle Sidebar"
           >
@@ -137,6 +138,8 @@ export default function ChatHeader({
             <button
               type="button"
               onClick={() => setShowMenu((prev) => !prev)}
+              aria-label="Safety options"
+              aria-expanded={showMenu}
               className="flex h-8 w-8 items-center justify-center rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-zinc-400 hover:text-white border border-zinc-700/50 transition font-bold"
               title="Safety Options"
             >

@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { CANONICAL_INTERESTS } from "@/lib/interests";
+import { BACKEND_URL } from "@/lib/api-config";
 
 export type DiscoverUserResult = {
   id: string;
@@ -30,19 +32,11 @@ type DiscoverPeopleViewProps = {
   }) => void;
   onAcceptRequest: (requestId: string) => Promise<void>;
   showNotification: (msg: string) => void;
+  searchQuery?: string;
+  onSearchQueryChange?: (q: string) => void;
 };
 
-const AVAILABLE_INTERESTS = [
-  "Coding",
-  "Gaming",
-  "Music",
-  "Movies",
-  "Sports",
-  "Travel",
-  "Anime",
-  "Reading",
-  "Fitness",
-];
+const AVAILABLE_INTERESTS = CANONICAL_INTERESTS;
 
 const GENDER_OPTIONS = [
   { value: "any", label: "Any Gender" },
@@ -59,9 +53,22 @@ export default function DiscoverPeopleView({
   onOpenPrivateChat,
   onAcceptRequest,
   showNotification,
+  searchQuery: externalSearchQuery,
+  onSearchQueryChange: externalOnSearchQueryChange,
 }: DiscoverPeopleViewProps) {
   // Filters state
-  const [searchQuery, setSearchQuery] = useState("");
+  const [internalSearchQuery, setInternalSearchQuery] = useState("");
+  const isControlledSearch = externalSearchQuery !== undefined;
+  const searchQuery = isControlledSearch ? externalSearchQuery : internalSearchQuery;
+
+  const handleSearchChange = (val: string) => {
+    if (isControlledSearch && externalOnSearchQueryChange) {
+      externalOnSearchQueryChange(val);
+    } else {
+      setInternalSearchQuery(val);
+    }
+  };
+
   const [onlineOnly, setOnlineOnly] = useState(false);
   const [genderFilter, setGenderFilter] = useState("any");
   const [selectedInterests, setSelectedInterests] = useState<string[]>([]);
@@ -101,7 +108,7 @@ export default function DiscoverPeopleView({
       }
 
       try {
-        const res = await fetch(`http://localhost:3001/friends/discover?${params.toString()}`);
+        const res = await fetch(`${BACKEND_URL}/friends/discover?${params.toString()}`);
         if (!res.ok) {
           throw new Error("Failed to discover users");
         }
@@ -143,7 +150,7 @@ export default function DiscoverPeopleView({
 
   // Clear all filters back to default
   const handleClearFilters = () => {
-    setSearchQuery("");
+    handleSearchChange("");
     setOnlineOnly(false);
     setGenderFilter("any");
     setSelectedInterests([]);
@@ -156,7 +163,7 @@ export default function DiscoverPeopleView({
   const handleSendFriendRequest = async (targetUserId: string) => {
     setSendingRequestIds((prev) => ({ ...prev, [targetUserId]: true }));
     try {
-      const res = await fetch("http://localhost:3001/friends/request", {
+      const res = await fetch(`${BACKEND_URL}/friends/request`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -224,7 +231,7 @@ export default function DiscoverPeopleView({
                 <span>Discover People</span>
               </h1>
               <p className="text-xs text-zinc-400 mt-0.5">
-                Connect with real ChatBuddy members, browse profiles, and build lasting friendships
+                Connect with real Chirp members, browse profiles, and build lasting friendships
               </p>
             </div>
           </div>
@@ -256,17 +263,19 @@ export default function DiscoverPeopleView({
             </span>
             <input
               type="text"
+              aria-label="Search members by username"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by username or name..."
+              onChange={(e) => handleSearchChange(e.target.value)}
+              placeholder="Search by username..."
               className="w-full rounded-2xl bg-zinc-950 border border-zinc-700/80 pl-10 pr-10 py-3 text-sm text-white placeholder-zinc-500 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition"
             />
             {searchQuery && (
               <button
                 type="button"
-                onClick={() => setSearchQuery("")}
+                onClick={() => handleSearchChange("")}
                 className="absolute inset-y-0 right-3 flex items-center text-zinc-400 hover:text-white text-sm"
                 title="Clear search"
+                aria-label="Clear search"
               >
                 ✕
               </button>
@@ -296,6 +305,7 @@ export default function DiscoverPeopleView({
 
               {/* Gender selector */}
               <select
+                aria-label="Filter by gender"
                 value={genderFilter}
                 onChange={(e) => setGenderFilter(e.target.value)}
                 className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-zinc-900 border border-zinc-800 text-zinc-200 outline-none focus:border-indigo-500 transition cursor-pointer"
@@ -379,16 +389,18 @@ export default function DiscoverPeopleView({
           {isLoading ? (
             <div className="py-20 text-center">
               <div className="animate-spin h-8 w-8 border-2 border-indigo-500/30 border-t-indigo-500 rounded-full mx-auto" />
-              <p className="mt-4 text-xs text-zinc-400">Discovering ChatBuddy users...</p>
+              <p className="mt-4 text-xs text-zinc-400">Discovering Chirp users...</p>
             </div>
           ) : users.length === 0 ? (
             <div className="py-16 text-center max-w-sm mx-auto">
               <div className="w-12 h-12 rounded-2xl bg-zinc-800/60 border border-zinc-700/60 text-zinc-400 flex items-center justify-center text-2xl mx-auto mb-3">
                 👥
               </div>
-              <h3 className="text-sm font-bold text-white">No people match your current filters</h3>
+              <h3 className="text-sm font-bold text-white">No people found</h3>
               <p className="text-xs text-zinc-400 mt-1.5 leading-relaxed">
-                Try loosening your filters or search terms to discover more people on ChatBuddy.
+                {searchQuery.trim()
+                  ? `No members found matching "${searchQuery.trim()}". Try checking the username or loosening active filters.`
+                  : "No people match your current filters. Try loosening your filters to discover more people on Chirp."}
               </p>
               {hasActiveFilters && (
                 <button
@@ -407,7 +419,7 @@ export default function DiscoverPeopleView({
                   Registered Members ({users.length})
                 </span>
                 <span className="text-[11px] text-zinc-500">
-                  Real users on ChatBuddy
+                  Real users on Chirp
                 </span>
               </div>
 

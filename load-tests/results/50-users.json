@@ -1,0 +1,78 @@
+{
+  "tier": "50_users",
+  "concurrency": 50,
+  "duration": "60s",
+  "timestamp": "2026-09-17T11:33:26.813Z",
+  "restApi": {
+    "requests": 2147,
+    "requestsPerSecond": 34.3,
+    "latencyMs": {
+      "avg": 214,
+      "p50": 149.2,
+      "p95": 542.5,
+      "p99": 1801.7
+    },
+    "failureRatePercent": 0,
+    "endpoints": [
+      {
+        "path": "GET /friends/discover",
+        "requests": 845,
+        "avg": 227.5,
+        "p50": 152.6,
+        "p95": 534.5,
+        "p99": 2075.4,
+        "failureRatePercent": 0
+      },
+      {
+        "path": "GET /friends/:userId",
+        "requests": 317,
+        "avg": 171.2,
+        "p50": 1.9,
+        "p95": 659.9,
+        "p99": 2227.1,
+        "failureRatePercent": 0
+      },
+      {
+        "path": "GET /users/:userId/profile",
+        "requests": 563,
+        "avg": 226.2,
+        "p50": 148.9,
+        "p95": 617.8,
+        "p99": 1656.5,
+        "failureRatePercent": 0
+      },
+      {
+        "path": "GET /notifications/:userId/unread-count",
+        "requests": 422,
+        "avg": 203,
+        "p50": 151.1,
+        "p95": 512.5,
+        "p99": 1395.8,
+        "failureRatePercent": 0
+      }
+    ]
+  },
+  "realtimeSocketIo": {
+    "connectionCount": 50,
+    "connectionSuccessRatePercent": 100,
+    "connectionLatencyP95Ms": 117,
+    "matchmakingAttempts": 50,
+    "successfulMatches": 50,
+    "matchedPairsCount": 25,
+    "matchmakingSuccessRatePercent": 100,
+    "matchmakingLatencyMs": {
+      "avg": 6101,
+      "p50": 6067,
+      "p95": 6900,
+      "p99": 6940
+    },
+    "messagesSent": 549,
+    "messagesReceived": 483,
+    "errors": {
+      "socketErrors": 0,
+      "connectErrors": 0,
+      "socketDisconnects": 0,
+      "totalErrors": 0
+    }
+  }
+}

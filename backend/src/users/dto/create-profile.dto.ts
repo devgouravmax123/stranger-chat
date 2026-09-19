@@ -43,4 +43,29 @@ export class CreateProfileDto {
   @IsOptional()
   @IsString()
   avatar?: string;
+
+  // ==========================================
+  // INTERESTS
+  // ==========================================
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  interests?: string[];
+
+  // ==========================================
+  // LANGUAGE
+  // ==========================================
+
+  @IsOptional()
+  @IsString()
+  language?: string;
+
+  // ==========================================
+  // GOAL
+  // ==========================================
+
+  @IsOptional()
+  @IsString()
+  goal?: string;
 }

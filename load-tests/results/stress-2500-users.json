@@ -1,0 +1,46 @@
+{
+  "tier": 2500,
+  "timestamp": "2026-09-18T05:27:22.726Z",
+  "concurrency": 2500,
+  "connectionSuccessPercent": 100,
+  "connectionFailures": 0,
+  "unexpectedDisconnects": 0,
+  "matchmakingSuccessPercent": 100,
+  "unmatchedUsers": 0,
+  "duplicateSelfMultiCount": 0,
+  "queueWait": {
+    "p50": 0,
+    "p95": 1,
+    "p99": 6
+  },
+  "restApi": {
+    "throughput": 14.8,
+    "p95": 41174.7,
+    "p99": 48007.5,
+    "errorPercent": 0
+  },
+  "messaging": {
+    "deliveryPercent": 100,
+    "avgLatencyMs": 685.3
+  },
+  "node": {
+    "cpuSeconds": "116.6",
+    "memoryMB": 716,
+    "eventLoopDelayMs": {
+      "p50": 1,
+      "p95": 2,
+      "p99": 2
+    }
+  },
+  "redis": {
+    "memoryBefore": "1.33M",
+    "memoryAfter": "3.88M",
+    "commandsProcessed": 75925,
+    "errors": 0
+  },
+  "db": {
+    "poolPressure": "Low",
+    "poolTimeouts": 0
+  },
+  "overallStatus": "STABLE"
+}

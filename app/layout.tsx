@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ChatBuddy - Instant Stranger Chat",
-  description: "Connect anonymously and chat with strangers worldwide on ChatBuddy.",
+  title: "Chirp - Instant Stranger Chat",
+  description: "Connect anonymously and chat with strangers worldwide on Chirp.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

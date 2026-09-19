@@ -1,6 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { CANONICAL_INTERESTS, CANONICAL_GOALS } from "@/lib/interests";
+import { BACKEND_URL } from "@/lib/api-config";
 
 export type UserProfile = {
   id: string;
@@ -34,9 +36,28 @@ export default function EditProfileModal({
   const [age, setAge] = useState(user.age ? String(user.age) : "");
   const [gender, setGender] = useState(user.gender || "prefer-not-to-say");
   const [avatar, setAvatar] = useState(user.avatar || "🐶");
+  const [selectedInterests, setSelectedInterests] = useState<string[]>(
+    user.interests || []
+  );
+  const [language, setLanguage] = useState(user.language || "English");
+  const [goal, setGoal] = useState(user.goal || "casual-chat");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    };
+    if (isOpen) {
+      document.addEventListener("keydown", handleKeyDown);
+    }
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen, onClose]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,16 +83,23 @@ export default function EditProfileModal({
     setSaving(true);
 
     try {
+      const token = typeof window !== "undefined" ? sessionStorage.getItem("sc_session_token") : null;
       const response = await fetch(
-        `http://localhost:3001/users/${user.id}/profile`,
+        `${BACKEND_URL}/users/${user.id}/profile`,
         {
           method: "PUT",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
           body: JSON.stringify({
             username: trimmedUsername,
             age: numericAge,
             gender,
             avatar,
+            interests: selectedInterests,
+            language,
+            goal,
           }),
         }
       );
@@ -97,6 +125,9 @@ export default function EditProfileModal({
         age: data.age,
         gender: data.gender,
         avatar: data.avatar,
+        interests: data.interests || selectedInterests,
+        language: data.language || language,
+        goal: data.goal || goal,
       });
 
       setTimeout(() => {
@@ -112,6 +143,9 @@ export default function EditProfileModal({
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="edit-profile-modal-title"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fadeIn"
       onClick={onClose}
     >
@@ -122,13 +156,14 @@ export default function EditProfileModal({
         <div className="flex items-center justify-between pb-4 border-b border-zinc-800">
           <div className="flex items-center gap-2">
             <span className="text-xl">⚙️</span>
-            <h2 className="text-lg font-bold text-white tracking-tight">
+            <h2 id="edit-profile-modal-title" className="text-lg font-bold text-white tracking-tight">
               Edit Your Profile
             </h2>
           </div>
           <button
             type="button"
             onClick={onClose}
+            aria-label="Close edit profile dialog"
             className="h-8 w-8 rounded-full bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white flex items-center justify-center transition"
           >
             ✕
@@ -161,10 +196,11 @@ export default function EditProfileModal({
 
           {/* Username */}
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-300 mb-1.5">
+            <label htmlFor="edit-profile-username" className="block text-xs font-semibold uppercase tracking-wider text-zinc-300 mb-1.5">
               Username
             </label>
             <input
+              id="edit-profile-username"
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
@@ -177,10 +213,11 @@ export default function EditProfileModal({
           {/* Age & Gender Grid */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-300 mb-1.5">
+              <label htmlFor="edit-profile-age" className="block text-xs font-semibold uppercase tracking-wider text-zinc-300 mb-1.5">
                 Age
               </label>
               <input
+                id="edit-profile-age"
                 type="number"
                 min={13}
                 max={100}
@@ -192,10 +229,12 @@ export default function EditProfileModal({
             </div>
 
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-300 mb-1.5">
+              <label htmlFor="edit-profile-gender" className="block text-xs font-semibold uppercase tracking-wider text-zinc-300 mb-1.5">
                 Gender
               </label>
               <select
+                id="edit-profile-gender"
+                aria-label="Gender"
                 value={gender}
                 onChange={(e) => setGender(e.target.value)}
                 className="w-full rounded-xl bg-zinc-950 border border-zinc-700/80 px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition"
@@ -205,6 +244,91 @@ export default function EditProfileModal({
                 <option value="non-binary">Non-binary</option>
                 <option value="prefer-not-to-say">Prefer not to say</option>
               </select>
+            </div>
+          </div>
+
+          {/* Language & Goal Grid */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label htmlFor="edit-profile-language" className="block text-xs font-semibold uppercase tracking-wider text-zinc-300 mb-1.5">
+                Language
+              </label>
+              <select
+                id="edit-profile-language"
+                aria-label="Language"
+                value={language}
+                onChange={(e) => setLanguage(e.target.value)}
+                className="w-full rounded-xl bg-zinc-950 border border-zinc-700/80 px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition"
+              >
+                <option>English</option>
+                <option>Hindi</option>
+                <option>Kannada</option>
+                <option>Telugu</option>
+                <option>Tamil</option>
+                <option>Spanish</option>
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="edit-profile-goal" className="block text-xs font-semibold uppercase tracking-wider text-zinc-300 mb-1.5">
+                Goal
+              </label>
+              <select
+                id="edit-profile-goal"
+                aria-label="Goal"
+                value={goal}
+                onChange={(e) => setGoal(e.target.value)}
+                className="w-full rounded-xl bg-zinc-950 border border-zinc-700/80 px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition"
+              >
+                {CANONICAL_GOALS.map((g) => (
+                  <option key={g.value} value={g.value}>
+                    {g.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Canonical Interests */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-300">
+                Interests
+              </label>
+              {selectedInterests.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedInterests([])}
+                  className="text-[11px] text-zinc-400 hover:text-white transition"
+                >
+                  Clear all
+                </button>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-1.5 p-2 bg-zinc-950/60 rounded-2xl border border-zinc-800/80 max-h-36 overflow-y-auto">
+              {CANONICAL_INTERESTS.map((interest) => {
+                const isSelected = selectedInterests.includes(interest);
+                return (
+                  <button
+                    key={interest}
+                    type="button"
+                    onClick={() =>
+                      setSelectedInterests((prev) =>
+                        prev.includes(interest)
+                          ? prev.filter((i) => i !== interest)
+                          : [...prev, interest]
+                      )
+                    }
+                    className={`px-3 py-1 rounded-xl text-xs font-medium border transition ${
+                      isSelected
+                        ? "bg-indigo-600 text-white border-indigo-500 shadow-xs shadow-indigo-600/30"
+                        : "bg-zinc-900/80 text-zinc-400 border-zinc-800 hover:border-zinc-700 hover:text-zinc-200"
+                    }`}
+                  >
+                    #{interest}
+                  </button>
+                );
+              })}
             </div>
           </div>
 

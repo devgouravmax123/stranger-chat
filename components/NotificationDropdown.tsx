@@ -85,7 +85,7 @@ export default function NotificationDropdown({
           <div className="py-10 text-center px-4">
             <span className="text-2xl block mb-1">🔔</span>
             <p className="text-xs text-zinc-400">No notifications yet</p>
-            <p className="text-[10px] text-zinc-500 mt-1">
+            <p className="text-[11px] text-zinc-400 mt-1">
               Friend requests and messages will appear here.
             </p>
           </div>

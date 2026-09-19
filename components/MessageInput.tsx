@@ -17,6 +17,8 @@ type MessageInputProps = {
   onTypingStart?: () => void;
   onTypingStop?: () => void;
   disabled?: boolean;
+  isVoiceDisabled?: boolean;
+  voiceDisabledReason?: string;
 };
 
 export default function MessageInput({
@@ -30,6 +32,8 @@ export default function MessageInput({
   onTypingStart,
   onTypingStop,
   disabled = false,
+  isVoiceDisabled = false,
+  voiceDisabledReason,
 }: MessageInputProps) {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [attachedImage, setAttachedImage] = useState<string | null>(null);
@@ -242,6 +246,7 @@ export default function MessageInput({
             type="button"
             onClick={clearAttachedImage}
             title="Remove attachment"
+            aria-label="Remove attachment"
             className="flex h-8 w-8 items-center justify-center rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white font-bold transition"
           >
             ✕
@@ -294,11 +299,22 @@ export default function MessageInput({
         </button>
 
         {/* VOICE */}
-        <VoiceRecorder onRecorded={handleVoiceRecorded} disabled={disabled} />
+        <VoiceRecorder
+          onRecorded={handleVoiceRecorded}
+          disabled={disabled || isVoiceDisabled}
+          disabledReason={voiceDisabledReason}
+        />
 
         {/* TEXT */}
         <input
           type="text"
+          aria-label={
+            attachedImage
+              ? "Add a caption"
+              : replyingTo
+              ? "Type your reply"
+              : "Type a message"
+          }
           placeholder={
             attachedImage
               ? "Add a caption (optional)..."

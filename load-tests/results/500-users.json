@@ -1,0 +1,93 @@
+{
+  "tier": "500_users",
+  "concurrency": 500,
+  "duration": "60s",
+  "timestamp": "2026-09-17T13:42:45.949Z",
+  "runtime": {
+    "totalSeconds": 158.7,
+    "rampUpDuration": "15s",
+    "restPhaseSeconds": 79.6,
+    "socketPhaseSeconds": 79,
+    "teardownMs": 6
+  },
+  "restApi": {
+    "requests": 10673,
+    "requestsPerSecond": 135.5,
+    "latencyMs": {
+      "avg": 2037.5,
+      "p50": 2641,
+      "p95": 3444,
+      "p99": 5431.3
+    },
+    "failureRatePercent": 0,
+    "endpoints": [
+      {
+        "path": "GET /friends/discover",
+        "requests": 4336,
+        "avg": 2600.5,
+        "p50": 2793.1,
+        "p95": 3385.2,
+        "p99": 3538.8,
+        "failureRatePercent": 0
+      },
+      {
+        "path": "GET /friends/:userId",
+        "requests": 1611,
+        "avg": 1521.1,
+        "p50": 56.9,
+        "p95": 5700.5,
+        "p99": 6293.7,
+        "failureRatePercent": 0
+      },
+      {
+        "path": "GET /users/:userId/profile",
+        "requests": 2613,
+        "avg": 2576.3,
+        "p50": 2793.7,
+        "p95": 3384.9,
+        "p99": 3524.8,
+        "failureRatePercent": 0
+      },
+      {
+        "path": "GET /notifications/:userId/unread-count",
+        "requests": 2113,
+        "avg": 609.6,
+        "p50": 2.4,
+        "p95": 2777.4,
+        "p99": 3184.1,
+        "failureRatePercent": 0
+      }
+    ]
+  },
+  "realtimeSocketIo": {
+    "connectionCount": 500,
+    "connectionSuccessRatePercent": 100,
+    "connectionLatencyP95Ms": 7,
+    "matchmakingAttempts": 500,
+    "successfulMatches": 252,
+    "matchedPairsCount": 126,
+    "unmatchedUsers": 248,
+    "matchmakingSuccessRatePercent": 50.4,
+    "queueWaitLatencyMs": {
+      "avg": 27597.2,
+      "p50": 24206,
+      "p95": 62725,
+      "p99": 68843
+    },
+    "matchExecutionLatencyMs": {
+      "avg": 27559.9,
+      "p50": 24160,
+      "p95": 62712,
+      "p99": 68763
+    },
+    "messagesSent": 2404,
+    "messagesReceived": 922,
+    "deliveryDefinition": "Messages received by room counterpart via receive_message event during active session.",
+    "errors": {
+      "socketErrors": 0,
+      "connectErrors": 0,
+      "socketDisconnects": 0,
+      "totalErrors": 0
+    }
+  }
+}

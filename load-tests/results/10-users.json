@@ -1,0 +1,92 @@
+{
+  "tier": "10_users",
+  "concurrency": 10,
+  "duration": "15s",
+  "timestamp": "2026-09-17T13:03:30.826Z",
+  "runtime": {
+    "totalSeconds": 33.6,
+    "restPhaseSeconds": 17,
+    "socketPhaseSeconds": 16.5,
+    "teardownMs": 2
+  },
+  "restApi": {
+    "requests": 113,
+    "requestsPerSecond": 6.9,
+    "latencyMs": {
+      "avg": 172.2,
+      "p50": 101.1,
+      "p95": 802.8,
+      "p99": 878.2
+    },
+    "failureRatePercent": 0,
+    "endpoints": [
+      {
+        "path": "GET /friends/discover",
+        "requests": 41,
+        "avg": 152,
+        "p50": 103.8,
+        "p95": 336.4,
+        "p99": 810.3,
+        "failureRatePercent": 0
+      },
+      {
+        "path": "GET /friends/:userId",
+        "requests": 19,
+        "avg": 223.5,
+        "p50": 1.9,
+        "p95": 894.1,
+        "p99": 977.4,
+        "failureRatePercent": 0
+      },
+      {
+        "path": "GET /users/:userId/profile",
+        "requests": 34,
+        "avg": 186.5,
+        "p50": 101.1,
+        "p95": 760.2,
+        "p99": 817.3,
+        "failureRatePercent": 0
+      },
+      {
+        "path": "GET /notifications/:userId/unread-count",
+        "requests": 19,
+        "avg": 138.8,
+        "p50": 90.1,
+        "p95": 845.9,
+        "p99": 846.3,
+        "failureRatePercent": 0
+      }
+    ]
+  },
+  "realtimeSocketIo": {
+    "connectionCount": 10,
+    "connectionSuccessRatePercent": 100,
+    "connectionLatencyP95Ms": 43,
+    "matchmakingAttempts": 10,
+    "successfulMatches": 10,
+    "matchedPairsCount": 5,
+    "unmatchedUsers": 0,
+    "matchmakingSuccessRatePercent": 100,
+    "queueWaitLatencyMs": {
+      "avg": 518.4,
+      "p50": 530,
+      "p95": 595,
+      "p99": 595
+    },
+    "matchExecutionLatencyMs": {
+      "avg": 418,
+      "p50": 412,
+      "p95": 480,
+      "p99": 480
+    },
+    "messagesSent": 32,
+    "messagesReceived": 32,
+    "deliveryDefinition": "Messages received by room counterpart via receive_message event during active session.",
+    "errors": {
+      "socketErrors": 0,
+      "connectErrors": 0,
+      "socketDisconnects": 0,
+      "totalErrors": 0
+    }
+  }
+}

@@ -13,12 +13,8 @@ import { RedisService } from '../redis/redis.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { UsersService } from '../users/users.service.js';
 import { FriendsService } from '../friends/friends.service.js';
-
-interface MatchPreferences {
-  language: string;
-  interests: string[];
-  goal: string;
-}
+import { MatchingService, MatchPreferences } from './matching.service.js';
+import { SessionTokenService } from '../auth/session-token.service.js';
 
 interface WaitingUser {
   socket: Socket;
@@ -50,6 +46,8 @@ interface VoiceMessageData {
 
 interface FriendVoiceMessageData {
   roomId: string;
+  senderId?: string;
+  clientId?: string;
   audioData: string;
   replyToId?: string;
 }
@@ -63,6 +61,8 @@ interface ImageMessageData {
 
 interface FriendImageMessageData {
   roomId: string;
+  senderId?: string;
+  clientId?: string;
   imageData: string;
   text?: string;
   replyToId?: string;
@@ -71,17 +71,19 @@ interface FriendImageMessageData {
 export interface ActiveCallSession {
   callId: string;
   roomId: string;
-  chatType: 'stranger' | 'friend';
+  chatType?: 'friend' | 'stranger';
   callerId: string;
   receiverId?: string;
-  status: 'calling' | 'connected';
+  status: 'calling' | 'connected' | 'ended';
+  startedAt?: number;
   updatedAt: number;
 }
 
 @WebSocketGateway({
   cors: {
-    origin: 'http://localhost:3000',
+    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
   },
+  maxHttpBufferSize: 1e7,
 })
 export class ChatGateway implements OnGatewayInit {
   @WebSocketServer()
@@ -96,6 +98,7 @@ export class ChatGateway implements OnGatewayInit {
   private inMemoryUserPreferences = new Map<string, MatchPreferences>();
   private inMemoryActiveCallSessions = new Map<string, ActiveCallSession>();
   private inMemoryUserActiveCalls = new Map<string, string>();
+  private knownUserIdsCache = new Set<string>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -103,6 +106,8 @@ export class ChatGateway implements OnGatewayInit {
     private readonly notifications: NotificationsService,
     private readonly usersService: UsersService,
     private readonly friendsService: FriendsService,
+    private readonly matchingService: MatchingService,
+    private readonly sessionTokenService: SessionTokenService,
   ) {}
 
   getActiveCallForUser(userId: string): ActiveCallSession | null {
@@ -125,6 +130,16 @@ export class ChatGateway implements OnGatewayInit {
       return null;
     }
     return session;
+  }
+
+  getActiveCallForRoom(roomId: string): ActiveCallSession | null {
+    if (!roomId) return null;
+    for (const s of Array.from(this.inMemoryActiveCallSessions.values())) {
+      if (s.roomId === roomId) {
+        return s;
+      }
+    }
+    return null;
   }
 
   registerActiveCallSession(session: ActiveCallSession) {
@@ -166,12 +181,38 @@ export class ChatGateway implements OnGatewayInit {
       this.server.to(`user:${userId}`).emit('new_notification', notification);
     });
 
+    this.notifications.registerNotificationReadEmitter(
+      (userId: string, data: { readIds?: string[]; unreadCount: number }) => {
+        this.server.to(`user:${userId}`).emit('notifications_read', data);
+      },
+    );
+
     this.usersService.registerDeletionHook(async (userId: string) => {
       await this.handleUserAccountDeleted(userId);
     });
 
     this.friendsService.registerPresenceChecker(async (userId: string) => {
       return this.isUserOnline(userId);
+    });
+
+    this.friendsService.registerBatchPresenceChecker(async (userIds: string[]) => {
+      const onlineSet = new Set<string>();
+      const needRedisCheck: string[] = [];
+      for (const id of userIds) {
+        const socks = this.inMemoryUserSockets.get(id);
+        if (socks && socks.size > 0) {
+          onlineSet.add(id);
+        } else {
+          needRedisCheck.push(id);
+        }
+      }
+      if (needRedisCheck.length > 0) {
+        const redisOnline = await this.redis.areUsersOnline(needRedisCheck);
+        for (const id of redisOnline) {
+          onlineSet.add(id);
+        }
+      }
+      return onlineSet;
     });
   }
 
@@ -286,8 +327,16 @@ export class ChatGateway implements OnGatewayInit {
 
     if (userId) {
       await this.recordUserOnline(socket, userId);
-      socket.emit('user_ready', { userId });
+      const token = this.sessionTokenService.signToken(userId);
+      socket.emit('user_ready', { userId, token });
       console.log('User ready:', userId);
+    } else {
+      socket.emit('auth_error', {
+        message: 'Authentication failed: invalid, expired, or missing session token for user identity',
+      });
+      setTimeout(() => {
+        socket.disconnect(true);
+      }, 50);
     }
   }
 
@@ -306,8 +355,14 @@ export class ChatGateway implements OnGatewayInit {
     @MessageBody() data: { roomId: string },
   ) {
     if (!data?.roomId) return;
-    this.clearActiveCallSession(undefined, data.roomId);
-    socket.to(data.roomId).emit('video_call_ended', { roomId: data.roomId });
+    const activeCall = this.getActiveCallForRoom(data.roomId);
+    if (activeCall) {
+      this.clearActiveCallSession(activeCall.callId);
+      socket.to(data.roomId).emit('video_call_ended', {
+        roomId: data.roomId,
+        callId: activeCall.callId,
+      });
+    }
     socket.leave(data.roomId);
     this.inMemoryUserRooms.delete(socket.id);
     this.inMemorySocketChats.delete(socket.id);
@@ -337,10 +392,15 @@ export class ChatGateway implements OnGatewayInit {
     const userId = await this.getUserId(socket);
     if (!userId) return;
 
+    const currentUserProfile = await this.getUserProfile(userId);
+
     const cleanPreferences: MatchPreferences = {
-      language: preferences?.language || 'English',
-      interests: Array.isArray(preferences?.interests) ? preferences.interests : [],
-      goal: preferences?.goal || 'casual-chat',
+      language: preferences?.language || currentUserProfile?.language || 'English',
+      interests:
+        Array.isArray(preferences?.interests) && preferences.interests.length > 0
+          ? preferences.interests
+          : currentUserProfile?.interests || [],
+      goal: preferences?.goal || currentUserProfile?.goal || 'casual-chat',
     };
 
     // Get list of blocked user IDs for current user
@@ -421,6 +481,7 @@ export class ChatGateway implements OnGatewayInit {
 
         socket.emit('waiting');
         console.log(`[Matchmaking] User ${userId} (${socket.id}) added to Redis waiting queue`);
+        setTimeout(() => this.sweepWaitingQueue(), 50);
         return;
       }
 
@@ -428,72 +489,14 @@ export class ChatGateway implements OnGatewayInit {
       const strangerUserId = waitingCandidate.userId;
       const strangerPreferences = waitingCandidate.preferences;
 
-      const score = this.calculateMatchScore(cleanPreferences, strangerPreferences);
-      const roomId = `${strangerSocket.id}-${socket.id}`;
-
-      strangerSocket.join(roomId);
-      socket.join(roomId);
-
-      const chat = await this.prisma.chat.create({
-        data: {
-          userAId: strangerUserId,
-          userBId: userId,
-        },
-      });
-
-      await this.redis.setMatchState(roomId, {
-        userAId: strangerUserId,
-        userASocketId: strangerSocket.id,
-        userBId: userId,
-        userBSocketId: socket.id,
-        chatId: chat.id,
-        createdAt: Date.now(),
-      });
-
-      await this.redis.setSocketMapping(strangerSocket.id, {
-        userId: strangerUserId,
-        roomId,
-        chatId: chat.id,
-      });
-
-      await this.redis.setSocketMapping(socket.id, {
-        userId,
-        roomId,
-        chatId: chat.id,
-      });
-
-      await this.redis.setPresence(strangerSocket.id, 'chatting');
-      await this.redis.setPresence(socket.id, 'chatting');
-
-      const messages = await this.getFormattedMessages(chat.id, userId);
-      const strangerMessages = await this.getFormattedMessages(chat.id, strangerUserId);
-
-      strangerSocket.emit('chat_history', { messages: strangerMessages, userId: strangerUserId });
-      socket.emit('chat_history', { messages, userId });
-
-      const strangerProfile = await this.getUserProfile(strangerUserId);
-      const userProfile = await this.getUserProfile(userId);
-
-      console.log(`[Matchmaking] Matched users via Redis: ${userId} & ${strangerUserId} in room ${roomId}`);
-
-      strangerSocket.emit('matched', {
-        roomId,
-        userId: strangerUserId,
-        strangerUserId: userId,
-        score,
-        strangerProfile: userProfile,
-      });
-
-      socket.emit('matched', {
-        roomId,
-        userId,
+      await this.createAndEmitMatch(
+        strangerSocket,
         strangerUserId,
-        score,
-        strangerProfile,
-      });
-
-      // Emit connection status to both
-      this.server.to(roomId).emit('stranger_online');
+        strangerPreferences,
+        socket,
+        userId,
+        cleanPreferences,
+      );
       return;
     }
 
@@ -531,7 +534,7 @@ export class ChatGateway implements OnGatewayInit {
     const stranger = waitingUser.socket;
     const strangerUserId = this.inMemorySocketUsers.get(stranger.id)!;
 
-    const score = this.calculateMatchScore(cleanPreferences, waitingUser.preferences);
+    const score = this.matchingService.calculateMatchScore(cleanPreferences, waitingUser.preferences);
     const roomId = `${stranger.id}-${socket.id}`;
 
     stranger.join(roomId);
@@ -578,6 +581,110 @@ export class ChatGateway implements OnGatewayInit {
     this.server.to(roomId).emit('stranger_online');
   }
 
+  private async createAndEmitMatch(
+    sockA: Socket,
+    userAId: string,
+    prefsA: MatchPreferences,
+    sockB: Socket,
+    userBId: string,
+    prefsB: MatchPreferences,
+  ) {
+    const score = this.matchingService.calculateMatchScore(prefsA, prefsB);
+    const roomId = `${sockA.id}-${sockB.id}`;
+
+    sockA.join(roomId);
+    sockB.join(roomId);
+
+    const chat = await this.prisma.chat.create({
+      data: {
+        userAId,
+        userBId,
+      },
+    });
+
+    this.inMemoryUserRooms.set(sockA.id, roomId);
+    this.inMemorySocketChats.set(sockA.id, chat.id);
+    this.inMemoryUserRooms.set(sockB.id, roomId);
+    this.inMemorySocketChats.set(sockB.id, chat.id);
+
+    await Promise.all([
+      this.redis.setMatchState(roomId, {
+        userAId,
+        userASocketId: sockA.id,
+        userBId,
+        userBSocketId: sockB.id,
+        chatId: chat.id,
+        createdAt: Date.now(),
+      }),
+      this.redis.setSocketMapping(sockA.id, {
+        userId: userAId,
+        roomId,
+        chatId: chat.id,
+      }),
+      this.redis.setSocketMapping(sockB.id, {
+        userId: userBId,
+        roomId,
+        chatId: chat.id,
+      }),
+      this.redis.setPresence(sockA.id, 'chatting'),
+      this.redis.setPresence(sockB.id, 'chatting'),
+    ]);
+
+    // Newly created stranger chat has no prior messages - emit [] without DB query
+    sockA.emit('chat_history', { messages: [], userId: userAId });
+    sockB.emit('chat_history', { messages: [], userId: userBId });
+
+    const [profileA, profileB] = await Promise.all([
+      this.getUserProfile(userAId),
+      this.getUserProfile(userBId),
+    ]);
+
+    console.log(`[Matchmaking] Matched users via Redis: ${userBId} & ${userAId} in room ${roomId}`);
+
+    sockA.emit('matched', {
+      roomId,
+      userId: userAId,
+      strangerUserId: userBId,
+      score,
+      strangerProfile: profileB,
+    });
+
+    sockB.emit('matched', {
+      roomId,
+      userId: userBId,
+      strangerUserId: userAId,
+      score,
+      strangerProfile: profileA,
+    });
+
+    this.server.to(roomId).emit('stranger_online');
+  }
+
+  private async sweepWaitingQueue() {
+    if (!this.redis.getIsConnected()) return;
+    try {
+      const qLen = await this.redis.getWaitingQueueLength();
+      if (qLen >= 2) {
+        const userA = await this.redis.popWaitingUser();
+        const userB = await this.redis.popWaitingUser();
+        if (userA && userB) {
+          const sockA = this.server.sockets.sockets.get(userA.socketId);
+          const sockB = this.server.sockets.sockets.get(userB.socketId);
+          if (sockA && sockA.connected && sockB && sockB.connected && userA.userId !== userB.userId) {
+            await this.createAndEmitMatch(sockA, userA.userId, userA.preferences, sockB, userB.userId, userB.preferences);
+          } else {
+            if (sockA && sockA.connected) await this.redis.pushWaitingUser(userA);
+            if (sockB && sockB.connected) await this.redis.pushWaitingUser(userB);
+          }
+        } else if (userA) {
+          await this.redis.pushWaitingUser(userA);
+        }
+      }
+    } catch (err) {
+      console.warn('[Matchmaking] Queue sweep error:', err);
+    }
+  }
+
   // ==========================================
   // FEATURE 1 — SKIP / NEXT STRANGER
   // ==========================================
@@ -585,7 +692,7 @@ export class ChatGateway implements OnGatewayInit {
   @SubscribeMessage('skip_stranger')
   async skipStranger(
     @ConnectedSocket() socket: Socket,
-    @MessageBody() preferences: MatchPreferences,
+    @MessageBody() preferences?: MatchPreferences,
   ) {
     const isAllowed = await this.redis.checkRateLimit(socket.id, 'skip', 3, 10);
     if (!isAllowed) {
@@ -598,13 +705,22 @@ export class ChatGateway implements OnGatewayInit {
     console.log('User skipped stranger:', socket.id);
     await this.leaveChat(socket, 'skipped');
 
-    // Immediately trigger matchmaking for next stranger
-    const cleanPref = preferences || {
-      language: 'English',
-      interests: [],
-      goal: 'casual-chat',
-    };
-    await this.findStranger(socket, cleanPref);
+    // Immediately trigger matchmaking for next stranger using existing or profile preferences
+    let cleanPref = preferences;
+    if (!cleanPref) {
+      const userId = await this.getUserId(socket);
+      if (userId) {
+        const userProfile = await this.getUserProfile(userId);
+        if (userProfile) {
+          cleanPref = {
+            language: userProfile.language || 'English',
+            interests: userProfile.interests || [],
+            goal: userProfile.goal || 'casual-chat',
+          };
+        }
+      }
+    }
+    await this.findStranger(socket, cleanPref!);
   }
 
   // ==========================================
@@ -664,7 +780,8 @@ export class ChatGateway implements OnGatewayInit {
         chatId,
         senderId: userId,
         replyToId,
-        status: 'sent',
+        status: 'delivered',
+        deliveredAt: new Date(),
       },
       include: {
         replyTo: true,
@@ -677,7 +794,7 @@ export class ChatGateway implements OnGatewayInit {
       id: message.id,
       clientId: data.clientId,
       timestamp: message.createdAt.getTime(),
-      status: 'sent',
+      status: 'delivered',
     });
 
     // Broadcast to stranger in room
@@ -702,12 +819,6 @@ export class ChatGateway implements OnGatewayInit {
         : null,
     });
 
-    // Mark as delivered in DB
-    await this.prisma.message.update({
-      where: { id: message.id },
-      data: { status: 'delivered', deliveredAt: new Date() },
-    });
-
     // Notify sender that message was delivered
     socket.emit('message_delivered', {
       id: message.id,
@@ -725,11 +836,25 @@ export class ChatGateway implements OnGatewayInit {
       socket.emit('rate_limit_exceeded', {
         message: 'Please wait before sending another voice note.',
       });
+      if (data?.clientId) {
+        socket.emit('voice_message_error', {
+          clientId: data.clientId,
+          message: "Please wait before sending another voice note.",
+        });
+      }
       return;
     }
 
     const { roomId, userId, chatId } = await this.getSocketContext(socket);
-    if (!roomId || !userId || !chatId || !data?.audioData) return;
+    if (!roomId || !userId || !chatId || !data?.audioData || !this.validateAudioPayload(data.audioData)) {
+      if (data?.clientId) {
+        socket.emit('voice_message_error', {
+          clientId: data.clientId,
+          message: "Voice note couldn't be sent. Please try again.",
+        });
+      }
+      return;
+    }
 
     const content = `audio:${data.audioData}`;
     const replyToId = data.replyToId || null;
@@ -791,7 +916,15 @@ export class ChatGateway implements OnGatewayInit {
     }
 
     const { roomId, userId, chatId } = await this.getSocketContext(socket);
-    if (!roomId || !userId || !chatId || !data?.imageData) return;
+    if (!roomId || !userId || !chatId || !data?.imageData || !this.validateImagePayload(data.imageData)) {
+      if (data?.clientId) {
+        socket.emit('image_message_error', {
+          clientId: data.clientId,
+          message: "Photo couldn't be sent. Please try again.",
+        });
+      }
+      return;
+    }
 
     const content = `image:${data.imageData}`;
     const replyToId = data.replyToId || null;
@@ -1346,11 +1479,20 @@ export class ChatGateway implements OnGatewayInit {
     @MessageBody() data: FriendVoiceMessageData,
   ) {
     const { roomId, audioData, replyToId } = data;
-    if (!roomId || !audioData) return;
+    if (!roomId || !audioData || !this.validateAudioPayload(audioData)) {
+      if (data?.clientId) {
+        socket.emit('friend_voice_error', {
+          clientId: data.clientId,
+          message: "Voice note couldn't be sent. Please try again.",
+        });
+      }
+      return;
+    }
 
-    let { userId: senderId, chatId } = await this.getSocketContext(socket);
+    let senderId = data.senderId;
+    let { userId: contextUserId, chatId } = await this.getSocketContext(socket);
     if (!senderId) {
-      senderId = (await this.getUserId(socket)) || undefined;
+      senderId = contextUserId || (await this.getUserId(socket)) || undefined;
     }
     if (!chatId && roomId.startsWith('friend-')) {
       const parts = roomId.replace('friend-', '').split('-');
@@ -1366,20 +1508,51 @@ export class ChatGateway implements OnGatewayInit {
         if (chat) chatId = chat.id;
       }
     }
-    if (!senderId || !chatId) return;
+    if (!senderId || !chatId) {
+      if (data?.clientId) {
+        socket.emit('friend_voice_error', {
+          clientId: data.clientId,
+          message: "Voice note couldn't be sent. Please try again.",
+        });
+      }
+      return;
+    }
 
     const content = `audio:${audioData}`;
     const message = await this.prisma.message.create({
       data: { content, chatId, senderId, replyToId: replyToId || null, status: 'sent' },
+      include: {
+        replyTo: true,
+      },
+    });
+
+    socket.emit('friend_message_sent', {
+      id: message.id,
+      clientId: data.clientId,
+      timestamp: message.createdAt.getTime(),
+      status: 'sent',
     });
 
     this.server.to(roomId).emit('receive_friend_message', {
       id: message.id,
+      clientId: data.clientId,
       text: 'Voice message',
       senderId,
       timestamp: message.createdAt.getTime(),
       type: 'audio',
       audioUrl: audioData,
+      status: 'delivered',
+      replyTo: message.replyTo
+        ? {
+            id: message.replyTo.id,
+            text: message.replyTo.content,
+            type: message.replyTo.content.startsWith('audio:')
+              ? 'audio'
+              : message.replyTo.content.startsWith('image:')
+              ? 'image'
+              : 'text',
+          }
+        : null,
     });
   }
 
@@ -1389,7 +1562,15 @@ export class ChatGateway implements OnGatewayInit {
     @MessageBody() data: FriendImageMessageData,
   ) {
     const { roomId, imageData, text, replyToId } = data;
-    if (!roomId || !imageData) return;
+    if (!roomId || !imageData || !this.validateImagePayload(imageData)) {
+      if (data?.clientId) {
+        socket.emit('friend_image_error', {
+          clientId: data.clientId,
+          message: "Photo couldn't be sent. Please try again.",
+        });
+      }
+      return;
+    }
 
     let { userId: senderId, chatId } = await this.getSocketContext(socket);
     if (!senderId) {
@@ -1432,12 +1613,25 @@ export class ChatGateway implements OnGatewayInit {
   }
 
   @SubscribeMessage('next_stranger')
-  async nextStrangerHandler(@ConnectedSocket() socket: Socket) {
-    await this.skipStranger(socket, {
-      language: 'English',
-      interests: [],
-      goal: 'casual-chat',
-    });
+  async nextStrangerHandler(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody() preferences?: MatchPreferences,
+  ) {
+    let prefs = preferences;
+    if (!prefs || !prefs.interests || prefs.interests.length === 0) {
+      const userId = await this.getUserId(socket);
+      if (userId) {
+        const userProfile = await this.getUserProfile(userId);
+        if (userProfile) {
+          prefs = {
+            language: userProfile.language || 'English',
+            interests: userProfile.interests || [],
+            goal: userProfile.goal || 'casual-chat',
+          };
+        }
+      }
+    }
+    await this.skipStranger(socket, prefs);
   }
 
   // ==========================================
@@ -1506,7 +1700,7 @@ export class ChatGateway implements OnGatewayInit {
         },
       });
       if (!friendship) {
-        return { isValid: false, isFriend: true, errorReason: 'You can only video call accepted ChatBuddy friends.' };
+        return { isValid: false, isFriend: true, errorReason: 'You can only video call accepted Chirp friends.' };
       }
 
       // 3. Verify neither user is blocked
@@ -1550,8 +1744,17 @@ export class ChatGateway implements OnGatewayInit {
     @ConnectedSocket() socket: Socket,
     @MessageBody() data: { roomId: string; callId: string },
   ) {
-    if (!data?.callId) {
-      socket.emit('video_call_error', { message: 'Missing call identifier.' });
+    if (
+      !data ||
+      typeof data !== 'object' ||
+      !data.callId ||
+      !data.roomId ||
+      typeof data.callId !== 'string' ||
+      typeof data.roomId !== 'string' ||
+      !data.callId.trim() ||
+      !data.roomId.trim()
+    ) {
+      socket.emit('video_call_error', { message: 'Missing or invalid call identifier and room ID.' });
       return;
     }
 
@@ -1789,9 +1992,16 @@ export class ChatGateway implements OnGatewayInit {
     const { roomId, chatId } = await this.getSocketContext(socket);
     if (!roomId) return;
 
-    // Immediately stop and clear any active video call on leave
-    this.clearActiveCallSession(undefined, roomId);
-    socket.to(roomId).emit('video_call_ended', { roomId, reason });
+    // Immediately stop and clear active video call on leave ONLY if one was actually active
+    const activeCall = this.getActiveCallForRoom(roomId);
+    if (activeCall) {
+      this.clearActiveCallSession(activeCall.callId);
+      socket.to(roomId).emit('video_call_ended', {
+        roomId,
+        callId: activeCall.callId,
+        reason,
+      });
+    }
 
     // Notify stranger of exit reason
     if (reason === 'skipped') {
@@ -1803,16 +2013,24 @@ export class ChatGateway implements OnGatewayInit {
     }
 
     if (chatId) {
-      const chat = await this.prisma.chat.findUnique({
-        where: { id: chatId },
-        select: { endedAt: true },
-      });
-
-      if (chat && !chat.endedAt) {
-        await this.prisma.chat.update({
+      try {
+        const chat = await this.prisma.chat.findUnique({
           where: { id: chatId },
-          data: { endedAt: new Date() },
+          select: { endedAt: true },
         });
+
+        if (chat && !chat.endedAt) {
+          await this.prisma.chat.update({
+            where: { id: chatId },
+            data: { endedAt: new Date() },
+          });
+        }
+      } catch (error: any) {
+        if (error?.code === 'P2025') {
+          // Chat was already updated or deleted concurrently by another operation; treat as completed
+        } else {
+          throw error;
+        }
       }
     }
 
@@ -1846,8 +2064,15 @@ export class ChatGateway implements OnGatewayInit {
 
     const { roomId } = await this.getSocketContext(socket);
     if (roomId) {
-      this.clearActiveCallSession(undefined, roomId);
-      socket.to(roomId).emit('video_call_ended', { roomId, reason: 'disconnected' });
+      const roomActiveCall = this.getActiveCallForRoom(roomId);
+      if (roomActiveCall) {
+        this.clearActiveCallSession(roomActiveCall.callId);
+        socket.to(roomId).emit('video_call_ended', {
+          roomId,
+          callId: roomActiveCall.callId,
+          reason: 'disconnected',
+        });
+      }
       socket.to(roomId).emit('stranger_offline');
     }
 
@@ -1934,7 +2159,7 @@ export class ChatGateway implements OnGatewayInit {
     }
 
     if (!userId) {
-      userId = (socket.handshake.auth?.userId as string) || (socket.handshake.query?.userId as string);
+      userId = (await this.getUserId(socket)) || undefined;
     }
 
     return { userId, roomId, chatId };
@@ -1944,34 +2169,48 @@ export class ChatGateway implements OnGatewayInit {
     const existingUserId = this.inMemorySocketUsers.get(socket.id);
     if (existingUserId) return existingUserId;
 
-    // Check if client supplied an existing userId in handshake auth or query
+    // Check if client supplied token or userId in handshake auth or query
+    const handshakeToken =
+      (socket.handshake.auth?.token as string) ||
+      (socket.handshake.query?.token as string);
+
     const handshakeUserId =
       (socket.handshake.auth?.userId as string) ||
       (socket.handshake.query?.userId as string);
 
-    if (handshakeUserId) {
-      // Verify user exists in database
-      const existingUser = await this.prisma.user.findUnique({
-        where: { id: handshakeUserId },
-      });
-      if (existingUser) {
-        this.inMemorySocketUsers.set(socket.id, existingUser.id);
-        if (this.redis.getIsConnected()) {
-          await this.redis.setSocketMapping(socket.id, { userId: existingUser.id });
-        }
-        return existingUser.id;
+    if (handshakeToken) {
+      const payload = this.sessionTokenService.verifyToken(handshakeToken);
+      if (!payload) {
+        return null;
       }
+      if (handshakeUserId && handshakeUserId !== payload.userId) {
+        return null;
+      }
+      const verifiedUserId = payload.userId;
+      this.knownUserIdsCache.add(verifiedUserId);
+      this.inMemorySocketUsers.set(socket.id, verifiedUserId);
+      if (this.redis.getIsConnected()) {
+        await this.redis.setSocketMapping(socket.id, { userId: verifiedUserId });
+      }
+      return verifiedUserId;
+    }
+
+    // Client claimed an explicit userId without providing a valid session token -> Reject spoofed identity!
+    if (handshakeUserId) {
+      return null;
     }
 
     if (this.redis.getIsConnected()) {
       const mapping = await this.redis.getSocketMapping(socket.id);
       if (mapping?.userId) {
+        this.knownUserIdsCache.add(mapping.userId);
         this.inMemorySocketUsers.set(socket.id, mapping.userId);
         return mapping.userId;
       }
     }
 
     const user = await this.prisma.user.create({ data: {} });
+    this.knownUserIdsCache.add(user.id);
     this.inMemorySocketUsers.set(socket.id, user.id);
 
     if (this.redis.getIsConnected()) {
@@ -1981,35 +2220,32 @@ export class ChatGateway implements OnGatewayInit {
     return user.id;
   }
 
-  // ==========================================
-  // MATCH SCORE HELPER
-  // ==========================================
-
-  private calculateMatchScore(
-    prefsA: MatchPreferences,
-    prefsB: MatchPreferences,
-  ): number {
-    let score = 0;
-
-    // Language match: 40 points
-    if (prefsA.language === prefsB.language) {
-      score += 40;
+  private validateAudioPayload(audioData: string): boolean {
+    if (!audioData || typeof audioData !== 'string') return false;
+    if (audioData.length > 5 * 1024 * 1024) return false;
+    const lower = audioData.toLowerCase();
+    if (lower.includes('<script') || lower.includes('data:text/html') || lower.includes('<svg')) {
+      return false;
     }
-
-    // Goal match: 30 points
-    if (prefsA.goal === prefsB.goal) {
-      score += 30;
-    }
-
-    // Shared interests: up to 30 points
-    const interestsA = new Set(prefsA.interests || []);
-    const interestsB = new Set(prefsB.interests || []);
-    const sharedCount = [...interestsA].filter((i) => interestsB.has(i)).length;
-    const maxInterests = Math.max(interestsA.size, interestsB.size, 1);
-    score += Math.round((sharedCount / maxInterests) * 30);
-
-    return Math.min(score, 100);
+    const audioPrefixRegex = /^data:audio\/(webm|mp4|ogg|wav|mpeg|aac|x-m4a|m4a|wave);base64,[A-Za-z0-9+/=]+$/;
+    if (audioPrefixRegex.test(audioData)) return true;
+    const plainBase64Regex = /^[A-Za-z0-9+/=]+$/;
+    if (plainBase64Regex.test(audioData) && audioData.length >= 32) return true;
+    return false;
   }
+
+  private validateImagePayload(imageData: string): boolean {
+    if (!imageData || typeof imageData !== 'string') return false;
+    if (imageData.length > 5 * 1024 * 1024) return false;
+    const lower = imageData.toLowerCase();
+    if (lower.includes('<script') || lower.includes('data:text/html') || lower.includes('<svg') || lower.includes('javascript:')) {
+      return false;
+    }
+    const imagePrefixRegex = /^data:image\/(jpeg|jpg|png|webp|gif);base64,[A-Za-z0-9+/=]+$/;
+    if (imagePrefixRegex.test(imageData)) return true;
+    return false;
+  }
+
 
   // ==========================================
   // USER PROFILE HELPER

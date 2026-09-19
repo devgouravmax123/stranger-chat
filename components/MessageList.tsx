@@ -93,7 +93,7 @@ export default function MessageList({
         messages.map((message, index) => {
           const isMe = message.sender === "me";
           const isDeleted = Boolean(message.deletedAt);
-          const msgKey = message.id || message.clientId || `${message.timestamp}-${index}`;
+          const msgKey = message.clientId || message.id || `${message.timestamp}-${index}`;
 
           return (
             <div
@@ -199,6 +199,7 @@ export default function MessageList({
                       <button
                         type="button"
                         onClick={() => onReplyMessage(message)}
+                        aria-label="Reply to this message"
                         className="h-7 w-7 rounded-full bg-zinc-800/90 hover:bg-zinc-700 text-zinc-300 hover:text-white flex items-center justify-center text-xs shadow-sm transition border border-zinc-700/60"
                         title="Reply"
                       >
@@ -214,6 +215,7 @@ export default function MessageList({
                             prev === message.id ? null : (message.id || null),
                           )
                         }
+                        aria-label="React to this message"
                         className="h-7 w-7 rounded-full bg-zinc-800/90 hover:bg-zinc-700 text-zinc-300 hover:text-white flex items-center justify-center text-xs shadow-sm transition border border-zinc-700/60"
                         title="React"
                       >
@@ -225,6 +227,7 @@ export default function MessageList({
                       <button
                         type="button"
                         onClick={() => onDeleteMessage(message.id!)}
+                        aria-label="Delete this message"
                         className="h-7 w-7 rounded-full bg-red-950/60 hover:bg-red-900/80 text-red-400 hover:text-red-300 flex items-center justify-center text-xs shadow-sm transition border border-red-800/50"
                         title="Delete"
                       >

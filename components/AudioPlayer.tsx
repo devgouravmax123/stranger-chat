@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { dataUrlToBlob } from "../lib/audioConverter";
 
 type AudioPlayerProps = {
   src: string;
@@ -12,47 +13,212 @@ export default function AudioPlayer({
   isMe = false,
 }: AudioPlayerProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const prevBlobUrlRef = useRef<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [playbackRate, setPlaybackRate] = useState<number>(1);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [hasError, setHasError] = useState(false);
+
+  // Synchronously compute stable Blob URL or direct Data URL on initial render
+  const resolvedSrc = useMemo(() => {
+    if (!src) return "";
+    if (src.startsWith("data:")) {
+      const blob = dataUrlToBlob(src);
+      if (blob && blob.size > 0) {
+        return URL.createObjectURL(blob);
+      }
+    }
+    return src;
+  }, [src]);
+
+  // Clean up previous blob URL only when resolvedSrc changes or component unmounts
+  useEffect(() => {
+    if (resolvedSrc.startsWith("blob:")) {
+      if (prevBlobUrlRef.current && prevBlobUrlRef.current !== resolvedSrc) {
+        try {
+          URL.revokeObjectURL(prevBlobUrlRef.current);
+        } catch {}
+      }
+      prevBlobUrlRef.current = resolvedSrc;
+    }
+    return () => {
+      if (prevBlobUrlRef.current) {
+        try {
+          URL.revokeObjectURL(prevBlobUrlRef.current);
+        } catch {}
+        prevBlobUrlRef.current = null;
+      }
+    };
+  }, [resolvedSrc]);
 
   useEffect(() => {
     setIsPlaying(false);
     setCurrentTime(0);
     setDuration(0);
     setIsLoaded(false);
+    setHasError(false);
 
     const audio = audioRef.current;
     if (!audio) return;
 
-    const updateTime = () => setCurrentTime(audio.currentTime);
-    const updateDuration = () => {
-      if (!isNaN(audio.duration) && isFinite(audio.duration)) {
-        setDuration(audio.duration);
+    // Explicitly guarantee unmuted full-volume output
+    audio.muted = false;
+    audio.volume = 1.0;
+
+    const onPlay = () => {
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[AudioPlayer:FORENSIC_EVENT] play", { currentTime: audio.currentTime, readyState: audio.readyState });
+      }
+      setIsPlaying(true);
+    };
+
+    const onPlaying = () => {
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[AudioPlayer:FORENSIC_EVENT] playing (audio physically active)", { currentTime: audio.currentTime });
+      }
+      setIsPlaying(true);
+      setHasError(false);
+    };
+
+    const onPause = () => {
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[AudioPlayer:FORENSIC_EVENT] pause", { currentTime: audio.currentTime });
+      }
+      setIsPlaying(false);
+    };
+
+    const onWaiting = () => {
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[AudioPlayer:FORENSIC_EVENT] waiting/buffering", { currentTime: audio.currentTime });
+      }
+    };
+
+    const onCanPlay = () => {
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[AudioPlayer:FORENSIC_EVENT] canplay", { readyState: audio.readyState, duration: audio.duration });
+      }
+      setIsLoaded(true);
+    };
+
+    const onCanPlayThrough = () => {
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[AudioPlayer:FORENSIC_EVENT] canplaythrough");
+      }
+      setIsLoaded(true);
+    };
+
+    const onLoadedData = () => {
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[AudioPlayer:FORENSIC_EVENT] loadeddata");
+      }
+      setIsLoaded(true);
+    };
+
+    const onStalled = () => {
+      if (process.env.NODE_ENV !== "production") {
+        console.warn("[AudioPlayer:FORENSIC_EVENT] stalled", { networkState: audio.networkState });
+      }
+    };
+
+    let lastLoggedSec = -1;
+    const updateTime = () => {
+      const cur = audio.currentTime;
+      setCurrentTime(cur);
+
+      // Section 5: Log currentTime progression at integer/half intervals in development
+      if (process.env.NODE_ENV !== "production" && !audio.paused) {
+        const flooredSec = Math.floor(cur * 2) / 2;
+        if (flooredSec !== lastLoggedSec) {
+          lastLoggedSec = flooredSec;
+          console.log(`[AudioPlayer:PROGRESSION] currentTime: ${cur.toFixed(2)}s / ${(audio.duration || 0).toFixed(2)}s`);
+        }
+      }
+
+      // For streaming WebM recordings where duration header is Infinity, track progressive max time
+      if (!isFinite(audio.duration) || isNaN(audio.duration)) {
+        setDuration((prev) => Math.max(prev, cur));
         setIsLoaded(true);
       }
     };
+
+    const updateDuration = () => {
+      if (!isNaN(audio.duration) && isFinite(audio.duration) && audio.duration > 0) {
+        setDuration(audio.duration);
+        setIsLoaded(true);
+      } else if (audio.currentTime > 0) {
+        setDuration((prev) => Math.max(prev, audio.currentTime));
+        setIsLoaded(true);
+      }
+    };
+
     const handleEnded = () => {
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[AudioPlayer:FORENSIC_EVENT] ended", { finalTime: audio.currentTime });
+      }
       setIsPlaying(false);
       setCurrentTime(0);
+      if (audio.currentTime > 0) {
+        setDuration((prev) => Math.max(prev, audio.currentTime));
+      }
     };
 
-    audio.addEventListener("timeupdate", updateTime);
+    const handleError = () => {
+      console.warn("[AudioPlayer] Audio error event received:", {
+        resolvedPrefix: resolvedSrc ? resolvedSrc.slice(0, 40) : "empty",
+        rawSrcPrefix: src ? src.slice(0, 40) : "empty",
+        error: audio?.error,
+        networkState: audio?.networkState,
+        readyState: audio?.readyState,
+      });
+
+      // If Blob URL failed to decode, fallback immediately to direct Data URL
+      if (resolvedSrc !== src && src && audio) {
+        console.log("[AudioPlayer] Falling back from Blob URL to direct Data URL source");
+        audio.src = src;
+        audio.load();
+        return;
+      }
+
+      // Only display permanent error if user was attempting to play or audio actually failed to play
+      if (audio.currentTime > 0 || !audio.paused) {
+        setHasError(true);
+        setIsPlaying(false);
+      }
+    };
+
+    audio.addEventListener("play", onPlay);
+    audio.addEventListener("playing", onPlaying);
+    audio.addEventListener("pause", onPause);
+    audio.addEventListener("waiting", onWaiting);
+    audio.addEventListener("canplay", onCanPlay);
+    audio.addEventListener("canplaythrough", onCanPlayThrough);
     audio.addEventListener("loadedmetadata", updateDuration);
+    audio.addEventListener("loadeddata", onLoadedData);
     audio.addEventListener("durationchange", updateDuration);
+    audio.addEventListener("timeupdate", updateTime);
     audio.addEventListener("ended", handleEnded);
+    audio.addEventListener("stalled", onStalled);
+    audio.addEventListener("error", handleError);
 
     return () => {
-      audio.removeEventListener("timeupdate", updateTime);
+      audio.removeEventListener("play", onPlay);
+      audio.removeEventListener("playing", onPlaying);
+      audio.removeEventListener("pause", onPause);
+      audio.removeEventListener("waiting", onWaiting);
+      audio.removeEventListener("canplay", onCanPlay);
+      audio.removeEventListener("canplaythrough", onCanPlayThrough);
       audio.removeEventListener("loadedmetadata", updateDuration);
+      audio.removeEventListener("loadeddata", onLoadedData);
       audio.removeEventListener("durationchange", updateDuration);
+      audio.removeEventListener("timeupdate", updateTime);
       audio.removeEventListener("ended", handleEnded);
+      audio.removeEventListener("stalled", onStalled);
     };
-  }, [src]);
+  }, [resolvedSrc]);
 
-  const togglePlay = () => {
+  const togglePlay = async () => {
     const audio = audioRef.current;
     if (!audio) return;
 
@@ -60,10 +226,56 @@ export default function AudioPlayer({
       audio.pause();
       setIsPlaying(false);
     } else {
+      // Explicitly ensure audio element is unmuted and volume is full 1.0
+      audio.muted = false;
+      audio.volume = 1.0;
+
+      // Unlock and verify browser audio hardware sink on user gesture
+      try {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtx) {
+          const ctx = new AudioCtx();
+          if (ctx.state === "suspended") {
+            await ctx.resume();
+          }
+          await ctx.close();
+        }
+      } catch {}
+
+      // If audio has reached the end, reset to beginning
+      if (audio.ended || (duration > 0 && Math.abs(audio.currentTime - duration) < 0.2)) {
+        audio.currentTime = 0;
+      }
+
+      // Safe development diagnostics
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[AudioPlayer:DEV_PLAY_CLICK]", {
+          tagName: audio.tagName,
+          muted: audio.muted,
+          volume: audio.volume,
+          paused: audio.paused,
+          readyState: audio.readyState,
+          networkState: audio.networkState,
+          srcPrefix: audio.src ? audio.src.slice(0, 45) : "empty",
+          currentSrcPrefix: audio.currentSrc ? audio.currentSrc.slice(0, 45) : "empty",
+          currentTime: audio.currentTime,
+        });
+      }
+
       audio
         .play()
-        .then(() => setIsPlaying(true))
-        .catch((err) => console.error("Audio playback error:", err));
+        .then(() => {
+          setIsPlaying(true);
+          setHasError(false);
+          if (process.env.NODE_ENV !== "production") {
+            console.log("[AudioPlayer] play() resolved successfully - audio should be audible through physical speakers");
+          }
+        })
+        .catch((err) => {
+          console.error("[AudioPlayer] Audio playback error on play():", err);
+          setIsPlaying(false);
+          setHasError(true);
+        });
     }
   };
 
@@ -89,7 +301,7 @@ export default function AudioPlayer({
   const formatTime = (seconds: number) => {
     if (!seconds || isNaN(seconds)) return "00:00";
     const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
+    const secs = seconds % 60;
     return `${mins.toString().padStart(2, "0")}:${secs
       .toString()
       .padStart(2, "0")}`;
@@ -97,13 +309,28 @@ export default function AudioPlayer({
 
   const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
 
+  if (hasError) {
+    return (
+      <div
+        className={`flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-medium ${
+          isMe
+            ? "bg-indigo-900/40 border border-indigo-500/30 text-indigo-200"
+            : "bg-zinc-800 border border-zinc-700 text-zinc-400"
+        }`}
+      >
+        <span className="text-sm">⚠️</span>
+        <span>Unable to play this voice note.</span>
+      </div>
+    );
+  }
+
   return (
     <div
       className={`flex items-center gap-3 rounded-2xl p-2.5 min-w-[240px] max-w-[300px] select-none transition-all ${
         isMe ? "text-white" : "text-zinc-900"
       }`}
     >
-      <audio ref={audioRef} src={src} preload="metadata" />
+      <audio ref={audioRef} src={resolvedSrc} preload="auto" />
 
       {/* PLAY / PAUSE BUTTON */}
       <button
@@ -133,6 +360,8 @@ export default function AudioPlayer({
             step={0.1}
             value={currentTime}
             onChange={handleSeek}
+            aria-label="Seek audio playback"
+            aria-valuetext={`${formatTime(currentTime)} of ${formatTime(duration)}`}
             className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
           />
 

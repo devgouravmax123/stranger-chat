@@ -42,6 +42,9 @@ export default function ImageLightboxModal({
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Image preview"
       className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/90 backdrop-blur-sm p-4 transition-opacity animate-fadeIn"
       onClick={onClose}
     >
@@ -54,6 +57,7 @@ export default function ImageLightboxModal({
           type="button"
           onClick={handleDownload}
           title="Download Image"
+          aria-label="Download image"
           className="flex h-10 w-10 items-center justify-center rounded-full bg-white/20 text-white transition hover:bg-white/30 active:scale-95"
         >
           📥
@@ -63,6 +67,7 @@ export default function ImageLightboxModal({
           type="button"
           onClick={onClose}
           title="Close Preview"
+          aria-label="Close image preview"
           className="flex h-10 w-10 items-center justify-center rounded-full bg-white/20 text-white text-lg font-bold transition hover:bg-white/30 active:scale-95"
         >
           ✕

@@ -258,6 +258,15 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  async getWaitingQueueLength(): Promise<number> {
+    if (!this.isConnected) return 0;
+    try {
+      return await this.client.llen('matchmaking:waiting');
+    } catch {
+      return 0;
+    }
+  }
+
   async removeWaitingUserBySocketId(socketId: string): Promise<void> {
     if (!this.isConnected) return;
     try {
@@ -357,6 +366,37 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       return val === 'online';
     } catch {
       return false;
+    }
+  }
+
+  async areUsersOnline(userIds: string[]): Promise<Set<string>> {
+    const onlineSet = new Set<string>();
+    if (!userIds || userIds.length === 0) return onlineSet;
+
+    if (!this.isConnected) {
+      for (const id of userIds) {
+        const sockets = this.fallbackUserSockets.get(id);
+        if (sockets && sockets.size > 0) onlineSet.add(id);
+      }
+      return onlineSet;
+    }
+
+    try {
+      const pipeline = this.client.pipeline();
+      for (const id of userIds) {
+        pipeline.scard(`presence:sockets:${id}`);
+      }
+      const results = await pipeline.exec();
+      if (results) {
+        results.forEach(([err, count], idx) => {
+          if (!err && typeof count === 'number' && count > 0) {
+            onlineSet.add(userIds[idx]);
+          }
+        });
+      }
+      return onlineSet;
+    } catch {
+      return onlineSet;
     }
   }
 

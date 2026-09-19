@@ -1,0 +1,24 @@
+{
+  "name": "chatbuddy-load-tests",
+  "version": "1.0.0",
+  "description": "High-concurrency load testing suite for ChatBuddy (50 - 1000 users)",
+  "type": "module",
+  "scripts": {
+    "test:50": "node runners/run-suite.mjs 50 60s",
+    "test:100": "node runners/run-suite.mjs 100 60s",
+    "test:250": "node runners/run-suite.mjs 250 25s",
+    "test:500": "node runners/run-suite.mjs 500 30s",
+    "test:1000": "node runners/run-suite.mjs 1000 30s",
+    "test:rest:50": "node ../load-tests/bin/k6.exe run --env VUS=50 --env DURATION=20s scenarios/rest-api-load.js",
+    "test:socket:50": "node runners/socketio-concurrency-harness.mjs 50"
+  },
+  "keywords": [
+    "load-test",
+    "k6",
+    "socket.io",
+    "concurrency",
+    "webrtc"
+  ],
+  "author": "ChatBuddy",
+  "license": "ISC"
+}

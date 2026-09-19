@@ -1,0 +1,144 @@
+{
+  "tier": "dedicated_500_matchmaking",
+  "timestamp": "2026-09-17T17:55:23.812Z",
+  "connections": {
+    "attempted": 500,
+    "connected": 500,
+    "ready": 500,
+    "connectionSuccessRatePercent": 100,
+    "latencyMs": {
+      "avg": 7499.4,
+      "p50": 7518,
+      "p95": 14299,
+      "p99": 14867
+    }
+  },
+  "matchmaking": {
+    "attempts": 500,
+    "successfulMatches": 500,
+    "matchedPairs": 250,
+    "unmatchedUsers": 0,
+    "matchmakingSuccessRatePercent": 100,
+    "durationSeconds": 11.4,
+    "queueWaitLatencyMs": {
+      "avg": 0.5,
+      "p50": 0,
+      "p95": 2,
+      "p99": 6
+    },
+    "matchExecutionLatencyMs": {
+      "avg": 9725.1,
+      "p50": 10027,
+      "p95": 11090,
+      "p99": 11205
+    },
+    "fastestMatchMs": 2847,
+    "slowestMatchMs": 11282
+  },
+  "pairIntegrity": {
+    "uniqueUsers": 500,
+    "uniquePairs": 250,
+    "duplicatePairs": 0,
+    "selfMatches": 0,
+    "multiplePairUsers": 0,
+    "unmatchedUsers": 0,
+    "staleQueueEntries": 0,
+    "missingCounterparts": 0,
+    "inconsistentScores": 0
+  },
+  "representativeTimelines": [
+    {
+      "pairNum": 1,
+      "userA": "00000000-0000-4000-8000-000000000002",
+      "userB": "00000000-0000-4000-8000-000000000001",
+      "roomId": "wfwnPKNYDtb21EhxAAH2-ozOOkMb1NPPLRouJAAH1",
+      "score": 100,
+      "T1": 1789667700871,
+      "T2": 1789667700869,
+      "T3": 1789667700874,
+      "T4": 1789667701219,
+      "T5": 1789667701239,
+      "T6": 1789667703716,
+      "queueWait": 0,
+      "matchExecution": 2847
+    },
+    {
+      "pairNum": 2,
+      "userA": "00000000-0000-4000-8000-000000000008",
+      "userB": "00000000-0000-4000-8000-00000000000c",
+      "roomId": "7N9oLCg_R_2jEtuVAAH8-RiPnAP2cQh4MpgBdAAIA",
+      "score": 100,
+      "T1": 1789667700875,
+      "T2": 1789667700876,
+      "T3": 1789667700881,
+      "T4": 1789667701226,
+      "T5": 1789667701246,
+      "T6": 1789667707938,
+      "queueWait": 1,
+      "matchExecution": 7062
+    },
+    {
+      "pairNum": 3,
+      "userA": "00000000-0000-4000-8000-000000000004",
+      "userB": "00000000-0000-4000-8000-00000000000a",
+      "roomId": "tN4HnQzc3XC_6J0sAAH4-6Cyp3Vj_zrRANhNiAAH-",
+      "score": 100,
+      "T1": 1789667700873,
+      "T2": 1789667700876,
+      "T3": 1789667700881,
+      "T4": 1789667701226,
+      "T5": 1789667701246,
+      "T6": 1789667707949,
+      "queueWait": 3,
+      "matchExecution": 7073
+    },
+    {
+      "pairNum": 4,
+      "userA": "00000000-0000-4000-8000-000000000005",
+      "userB": "00000000-0000-4000-8000-000000000009",
+      "roomId": "1x7rzFJ0QSRkXupOAAH5-USnm7doE6cTP-3TuAAH9",
+      "score": 100,
+      "T1": 1789667700874,
+      "T2": 1789667700875,
+      "T3": 1789667700880,
+      "T4": 1789667701225,
+      "T5": 1789667701245,
+      "T6": 1789667707953,
+      "queueWait": 1,
+      "matchExecution": 7078
+    },
+    {
+      "pairNum": 5,
+      "userA": "00000000-0000-4000-8000-000000000003",
+      "userB": "00000000-0000-4000-8000-00000000000b",
+      "roomId": "3r9tG7qOj_U6aMeXAAH3-YpKPh93cX4REH6UCAAH_",
+      "score": 100,
+      "T1": 1789667700872,
+      "T2": 1789667700876,
+      "T3": 1789667700881,
+      "T4": 1789667701226,
+      "T5": 1789667701246,
+      "T6": 1789667707990,
+      "queueWait": 4,
+      "matchExecution": 7114
+    }
+  ],
+  "messaging": {
+    "sent": 10,
+    "received": 10,
+    "deliveryPercent": 100,
+    "socketErrors": 0,
+    "connectErrors": 0,
+    "unexpectedDisconnects": 0
+  },
+  "redis": {
+    "version": "memurai_version:4.2.3",
+    "mode": "redis_mode:standalone",
+    "memoryBefore": "used_memory_human:1.22M",
+    "memoryAfter": "used_memory_human:1.74M",
+    "clients": "connected_clients:2",
+    "commandsProcessedInTest": 8871,
+    "errors": 0,
+    "queueEmptyAfterCleanup": true
+  }
+}

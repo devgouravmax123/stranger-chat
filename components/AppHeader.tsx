@@ -14,6 +14,7 @@ type AppHeaderProps = {
   onMarkNotificationAsRead?: (id: string) => void;
   onMarkAllNotificationsAsRead?: () => void;
   onSelectNotification?: (notification: AppNotification) => void;
+  onOpenNotifications?: () => void;
 };
 
 export default function AppHeader({
@@ -27,8 +28,17 @@ export default function AppHeader({
   onMarkNotificationAsRead,
   onMarkAllNotificationsAsRead,
   onSelectNotification,
+  onOpenNotifications,
 }: AppHeaderProps) {
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+
+  const handleToggleNotifications = () => {
+    const nextState = !isNotificationOpen;
+    setIsNotificationOpen(nextState);
+    if (nextState) {
+      onOpenNotifications?.();
+    }
+  };
 
   return (
     <header className="h-14 border-b border-zinc-800/80 bg-zinc-900/90 backdrop-blur-md px-4 flex items-center justify-between z-30 shrink-0 select-none">
@@ -43,12 +53,9 @@ export default function AppHeader({
           <span className="text-lg leading-none font-mono">☰</span>
         </button>
 
-        <div className="flex items-center gap-2 mr-1">
-          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-tr from-indigo-600 to-purple-600 text-white shadow-sm text-xs font-black">
-            ⚡
-          </div>
-          <span className="text-sm font-bold tracking-tight text-white hidden xs:inline">
-            Chat<span className="text-indigo-400">Buddy</span>
+        <div className="flex items-center mr-1">
+          <span className="text-base font-bold tracking-tight text-white hidden xs:inline">
+            Chi<span className="text-indigo-400">rp</span>
           </span>
         </div>
 
@@ -68,8 +75,9 @@ export default function AppHeader({
         <button
           type="button"
           onClick={onOpenProfile}
-          className="flex items-center gap-2 pl-2 pr-3 py-1 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 border border-zinc-700/50 text-xs text-zinc-200 transition"
+          aria-label="View profile details"
           title="View profile details"
+          className="flex items-center gap-2 pl-2 pr-3 py-1 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 border border-zinc-700/50 text-xs text-zinc-200 transition"
         >
           <span className="text-base">{currentAvatar || "👤"}</span>
           <span className="font-semibold max-w-[100px] truncate hidden sm:inline">
@@ -82,7 +90,13 @@ export default function AppHeader({
           <button
             type="button"
             data-notification-trigger="true"
-            onClick={() => setIsNotificationOpen((prev) => !prev)}
+            onClick={handleToggleNotifications}
+            aria-label={
+              unreadNotificationsCount > 0
+                ? `Notifications (${unreadNotificationsCount} unread)`
+                : "Notifications"
+            }
+            aria-expanded={isNotificationOpen}
             className="h-9 w-9 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 border border-zinc-700/50 text-zinc-300 hover:text-white flex items-center justify-center text-sm transition relative"
             title="Notifications"
           >

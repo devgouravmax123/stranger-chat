@@ -1,0 +1,387 @@
+{
+  "tier": "tier_1000_users",
+  "timestamp": "2026-09-17T18:06:04.145Z",
+  "runtime": {
+    "totalSeconds": 140.9,
+    "connectionRampSeconds": 30.1,
+    "matchmakingDurationSeconds": 24.3,
+    "restDurationSeconds": 67.8,
+    "cleanupMs": 985,
+    "cleanExit": true
+  },
+  "connections": {
+    "attempted": 1000,
+    "connected": 1000,
+    "ready": 1000,
+    "connectionSuccessRatePercent": 100,
+    "latencyMs": {
+      "avg": 15002,
+      "p50": 15018,
+      "p95": 28505,
+      "p99": 29709
+    }
+  },
+  "restApi": {
+    "requests": 7768,
+    "requestsPerSecond": 117.1,
+    "avg": 2209.4,
+    "p50": 2789.6,
+    "p95": 4514.4,
+    "p99": 6358.6,
+    "failureRatePercent": 0,
+    "endpoints": [
+      {
+        "path": "GET /friends/discover",
+        "requests": 3074,
+        "avg": 2861,
+        "p50": 3191.8,
+        "p95": 4444.4,
+        "p99": 4697.3,
+        "failureRatePercent": 0
+      },
+      {
+        "path": "GET /friends/:userId",
+        "requests": 1196,
+        "avg": 1631.2,
+        "p50": 8,
+        "p95": 6747.8,
+        "p99": 7527.2,
+        "failureRatePercent": 0
+      },
+      {
+        "path": "GET /users/:userId/profile",
+        "requests": 1909,
+        "avg": 2834.3,
+        "p50": 3174.8,
+        "p95": 4413.6,
+        "p99": 4678.7,
+        "failureRatePercent": 0
+      },
+      {
+        "path": "GET /notifications/:userId/unread-count",
+        "requests": 1589,
+        "avg": 633.3,
+        "p50": 2.1,
+        "p95": 3051.7,
+        "p99": 3762.4,
+        "failureRatePercent": 0
+      }
+    ]
+  },
+  "socketIo": {
+    "connections": 1000,
+    "connectionSuccessRatePercent": 100,
+    "connectionLatencyMs": {
+      "avg": 15002,
+      "p50": 15018,
+      "p95": 28505,
+      "p99": 29709
+    },
+    "socketErrors": 0,
+    "connectErrors": 0,
+    "unexpectedDisconnects": 0
+  },
+  "matchmaking": {
+    "attempts": 1000,
+    "successfulMatches": 1000,
+    "matchedPairs": 500,
+    "unmatchedUsers": 0,
+    "matchmakingSuccessRatePercent": 100,
+    "durationSeconds": 24.3,
+    "queueWaitLatencyMs": {
+      "avg": 0.5,
+      "p50": 0,
+      "p95": 2,
+      "p99": 6
+    },
+    "matchExecutionLatencyMs": {
+      "avg": 20194.6,
+      "p50": 21419,
+      "p95": 23880,
+      "p99": 24067
+    }
+  },
+  "pairIntegrity": {
+    "uniqueUsers": 1000,
+    "uniquePairs": 500,
+    "duplicatePairs": 0,
+    "selfMatches": 0,
+    "multiplePairUsers": 0,
+    "unmatchedUsers": 0,
+    "missingCounterparts": 0,
+    "staleQueueEntries": 0
+  },
+  "logicalMatching": {
+    "realMatchmakingUsed": true,
+    "realRedisQueueUsed": true,
+    "realMatchingServiceUsed": true,
+    "mixedProfilesUsed": true,
+    "representativePairs": [
+      {
+        "pairNum": 1,
+        "userA": {
+          "id": "00000000-0000-4000-8000-000000000026",
+          "language": "Spanish",
+          "interests": [
+            "Music",
+            "Travel",
+            "Reading"
+          ],
+          "goal": "learning"
+        },
+        "userB": {
+          "id": "00000000-0000-4000-8000-000000000007",
+          "language": "Spanish",
+          "interests": [
+            "Music",
+            "Travel",
+            "Reading"
+          ],
+          "goal": "learning"
+        },
+        "backendScore": 100,
+        "canonicalComputedScore": 100,
+        "scoreAgreed": true,
+        "roomId": "g8NlXmCJybdUF04_AAAl-e-GbV1s3LyMYpgUTAAAG"
+      },
+      {
+        "pairNum": 2,
+        "userA": {
+          "id": "00000000-0000-4000-8000-000000000025",
+          "language": "Spanish",
+          "interests": [
+            "Music",
+            "Travel",
+            "Reading"
+          ],
+          "goal": "learning"
+        },
+        "userB": {
+          "id": "00000000-0000-4000-8000-000000000001",
+          "language": "English",
+          "interests": [
+            "Coding",
+            "Gaming",
+            "Music"
+          ],
+          "goal": "casual-chat"
+        },
+        "backendScore": 8,
+        "canonicalComputedScore": 8,
+        "scoreAgreed": true,
+        "roomId": "BjL1kFzo4LQ6Yb--AAAk-4NJK0YqmOe0_GOstAAAA"
+      },
+      {
+        "pairNum": 3,
+        "userA": {
+          "id": "00000000-0000-4000-8000-000000000003",
+          "language": "English",
+          "interests": [
+            "Movies",
+            "Anime",
+            "Reading"
+          ],
+          "goal": "friendship"
+        },
+        "userB": {
+          "id": "00000000-0000-4000-8000-00000000000f",
+          "language": "Hindi",
+          "interests": [
+            "Sports",
+            "Fitness",
+            "Travel"
+          ],
+          "goal": "casual-chat"
+        },
+        "backendScore": 0,
+        "canonicalComputedScore": 0,
+        "scoreAgreed": true,
+        "roomId": "P0Diq8y0DUVL9fiTAAAC-1vjl2FnQ38Xn7qI6AAAO"
+      },
+      {
+        "pairNum": 4,
+        "userA": {
+          "id": "00000000-0000-4000-8000-000000000004",
+          "language": "English",
+          "interests": [
+            "Movies",
+            "Anime",
+            "Reading"
+          ],
+          "goal": "friendship"
+        },
+        "userB": {
+          "id": "00000000-0000-4000-8000-000000000009",
+          "language": "English",
+          "interests": [
+            "Coding",
+            "Fitness",
+            "Movies"
+          ],
+          "goal": "networking"
+        },
+        "backendScore": 48,
+        "canonicalComputedScore": 48,
+        "scoreAgreed": true,
+        "roomId": "EWXn8sf-o5aOro9mAAAD-kB81LgNznHUOJI3gAAAI"
+      },
+      {
+        "pairNum": 5,
+        "userA": {
+          "id": "00000000-0000-4000-8000-000000000005",
+          "language": "Hindi",
+          "interests": [
+            "Sports",
+            "Fitness",
+            "Travel"
+          ],
+          "goal": "casual-chat"
+        },
+        "userB": {
+          "id": "00000000-0000-4000-8000-00000000000c",
+          "language": "English",
+          "interests": [
+            "Coding",
+            "Gaming",
+            "Music"
+          ],
+          "goal": "casual-chat"
+        },
+        "backendScore": 20,
+        "canonicalComputedScore": 20,
+        "scoreAgreed": true,
+        "roomId": "bnXCQCk2gE-u8GWEAAAE-K3HQLn4YNKexNxvzAAAL"
+      },
+      {
+        "pairNum": 6,
+        "userA": {
+          "id": "00000000-0000-4000-8000-00000000000e",
+          "language": "English",
+          "interests": [
+            "Movies",
+            "Anime",
+            "Reading"
+          ],
+          "goal": "friendship"
+        },
+        "userB": {
+          "id": "00000000-0000-4000-8000-00000000000d",
+          "language": "English",
+          "interests": [
+            "Movies",
+            "Anime",
+            "Reading"
+          ],
+          "goal": "friendship"
+        },
+        "backendScore": 100,
+        "canonicalComputedScore": 100,
+        "scoreAgreed": true,
+        "roomId": "UokZp7VriJFW_aYYAAAN-rdzxcBtbwE8yE2-eAAAM"
+      }
+    ],
+    "invalidPairings": 0,
+    "raceConditions": 0
+  },
+  "representativeTimelines": [
+    {
+      "pairNum": 1,
+      "userA": "00000000-0000-4000-8000-000000000026",
+      "userB": "00000000-0000-4000-8000-000000000007",
+      "roomId": "g8NlXmCJybdUF04_AAAl-e-GbV1s3LyMYpgUTAAAG",
+      "score": 100,
+      "T1": 1789668322108,
+      "T2": 1789668322093,
+      "T3": 1789668322098,
+      "T4": 1789668322103,
+      "T5": 1789668322443,
+      "T6": 1789668322463,
+      "T7": 1789668324083,
+      "queueWait": 0,
+      "matchExecution": 1990
+    },
+    {
+      "pairNum": 2,
+      "userA": "00000000-0000-4000-8000-000000000025",
+      "userB": "00000000-0000-4000-8000-000000000001",
+      "roomId": "BjL1kFzo4LQ6Yb--AAAk-4NJK0YqmOe0_GOstAAAA",
+      "score": 8,
+      "T1": 1789668322108,
+      "T2": 1789668322083,
+      "T3": 1789668322088,
+      "T4": 1789668322093,
+      "T5": 1789668322433,
+      "T6": 1789668322453,
+      "T7": 1789668324090,
+      "queueWait": 0,
+      "matchExecution": 2007
+    },
+    {
+      "pairNum": 3,
+      "userA": "00000000-0000-4000-8000-000000000003",
+      "userB": "00000000-0000-4000-8000-00000000000f",
+      "roomId": "P0Diq8y0DUVL9fiTAAAC-1vjl2FnQ38Xn7qI6AAAO",
+      "score": 0,
+      "T1": 1789668322088,
+      "T2": 1789668322094,
+      "T3": 1789668322099,
+      "T4": 1789668322104,
+      "T5": 1789668322444,
+      "T6": 1789668322464,
+      "T7": 1789668324091,
+      "queueWait": 6,
+      "matchExecution": 1997
+    },
+    {
+      "pairNum": 4,
+      "userA": "00000000-0000-4000-8000-000000000004",
+      "userB": "00000000-0000-4000-8000-000000000009",
+      "roomId": "EWXn8sf-o5aOro9mAAAD-kB81LgNznHUOJI3gAAAI",
+      "score": 48,
+      "T1": 1789668322088,
+      "T2": 1789668322093,
+      "T3": 1789668322098,
+      "T4": 1789668322103,
+      "T5": 1789668322443,
+      "T6": 1789668322463,
+      "T7": 1789668324095,
+      "queueWait": 5,
+      "matchExecution": 2002
+    },
+    {
+      "pairNum": 5,
+      "userA": "00000000-0000-4000-8000-000000000005",
+      "userB": "00000000-0000-4000-8000-00000000000c",
+      "roomId": "bnXCQCk2gE-u8GWEAAAE-K3HQLn4YNKexNxvzAAAL",
+      "score": 20,
+      "T1": 1789668322092,
+      "T2": 1789668322094,
+      "T3": 1789668322099,
+      "T4": 1789668322104,
+      "T5": 1789668322444,
+      "T6": 1789668322464,
+      "T7": 1789668324118,
+      "queueWait": 2,
+      "matchExecution": 2024
+    }
+  ],
+  "messaging": {
+    "sent": 25,
+    "received": 25,
+    "deliveryPercent": 100,
+    "socketErrors": 0,
+    "unexpectedDisconnects": 0
+  },
+  "infrastructure": {
+    "redis": {
+      "version": "memurai_version:4.2.3",
+      "mode": "redis_mode:standalone",
+      "memoryBefore": "used_memory_human:1.22M",
+      "memoryAfter": "used_memory_human:2.27M",
+      "clients": "connected_clients:2",
+      "commandsProcessedInTest": 35685,
+      "errors": 0,
+      "queueEmptyAfterCleanup": true
+    }
+  }
+}

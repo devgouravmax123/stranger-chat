@@ -1,0 +1,85 @@
+services:
+  # ------------------------------------------
+  # Redis: In-memory cache & realtime pub/sub
+  # ------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: chirp-redis
+    restart: unless-stopped
+    command: redis-server --save "" --appendonly no
+    networks:
+      - chirp-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  # ------------------------------------------
+  # Backend: NestJS Realtime & REST API
+  # ------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: chirp-backend
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    env_file:
+      - ./backend/.env
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - REDIS_URL=redis://redis:6379
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.1-flash-lite}
+      - AI_SUGGESTION_COOLDOWN_SECONDS=${AI_SUGGESTION_COOLDOWN_SECONDS:-10}
+      - AI_SUGGESTION_DAILY_LIMIT=${AI_SUGGESTION_DAILY_LIMIT:-5}
+      - AI_GLOBAL_RPM_LIMIT=${AI_GLOBAL_RPM_LIMIT:-15}
+      - AI_GLOBAL_RPD_LIMIT=${AI_GLOBAL_RPD_LIMIT:-500}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - chirp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ------------------------------------------
+  # Frontend: Next.js Client
+  # ------------------------------------------
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_BACKEND_URL=${NEXT_PUBLIC_BACKEND_URL:-http://localhost:3001}
+    container_name: chirp-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - chirp-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+networks:
+  chirp-network:
+    name: chirp-network
+    driver: bridge

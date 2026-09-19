@@ -124,7 +124,7 @@ export class GeminiService {
     const conversationTranscript = cleanedMessages.join('\n');
 
     // 3. Multilingual, context-preserving system prompt
-    const systemInstruction = `You are a conversation assistant helping two strangers continue a natural conversation on ChatBuddy.
+    const systemInstruction = `You are a conversation assistant helping two strangers continue a natural conversation on Chirp.
 
 Analyze only their recent conversation.
 

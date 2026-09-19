@@ -6,6 +6,7 @@ import {
 
 import { PrismaService } from '../prisma.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
+import { normalizeInterest } from '../constants/interests.js';
 
 @Injectable()
 export class FriendsService {
@@ -16,8 +17,106 @@ export class FriendsService {
     private readonly notifications: NotificationsService,
   ) {}
 
+  private batchPresenceChecker?: (userIds: string[]) => Promise<Set<string>> | Set<string>;
+  private userRelationshipsCache = new Map<string, { data: { friendIdSet: Set<string>; sentRequestSet: Set<string>; receivedRequestMap: Map<string, string>; blockedSet: Set<string> }; expiresAt: number }>();
+  private inFlightRelationships = new Map<string, Promise<{ friendIdSet: Set<string>; sentRequestSet: Set<string>; receivedRequestMap: Map<string, string>; blockedSet: Set<string> }>>();
+  private friendsCache = new Map<string, { data: any[]; expiresAt: number }>();
+  private inFlightFriends = new Map<string, Promise<any[]>>();
+
   registerPresenceChecker(checker: (userId: string) => Promise<boolean> | boolean) {
     this.presenceChecker = checker;
+  }
+
+  registerBatchPresenceChecker(checker: (userIds: string[]) => Promise<Set<string>> | Set<string>) {
+    this.batchPresenceChecker = checker;
+  }
+
+  invalidateUserRelationships(userId: string) {
+    this.userRelationshipsCache.delete(userId);
+    this.friendsCache.delete(userId);
+  }
+
+  private async getUserRelationships(userId: string) {
+    const now = Date.now();
+    const cached = this.userRelationshipsCache.get(userId);
+    if (cached && now < cached.expiresAt) {
+      return cached.data;
+    }
+
+    const inFlight = this.inFlightRelationships.get(userId);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const promise = (async () => {
+      try {
+        const [friendships, sentRequests, receivedRequests, blocks] = await Promise.all([
+          this.prisma.friendship.findMany({
+            where: {
+              OR: [{ userAId: userId }, { userBId: userId }],
+            },
+            select: {
+              userAId: true,
+              userBId: true,
+            },
+          }),
+          this.prisma.friendRequest.findMany({
+            where: {
+              senderId: userId,
+              status: 'PENDING',
+            },
+            select: { receiverId: true },
+          }),
+          this.prisma.friendRequest.findMany({
+            where: {
+              receiverId: userId,
+              status: 'PENDING',
+            },
+            select: { id: true, senderId: true },
+          }),
+          this.prisma.block.findMany({
+            where: {
+              OR: [{ blockerId: userId }, { blockedId: userId }],
+            },
+            select: { blockerId: true, blockedId: true },
+          }),
+        ]);
+
+        const friendIdSet = new Set<string>();
+        for (const f of friendships) {
+          if (f.userAId === userId) friendIdSet.add(f.userBId);
+          if (f.userBId === userId) friendIdSet.add(f.userAId);
+        }
+
+        const sentRequestSet = new Set(sentRequests.map((r) => r.receiverId));
+
+        const receivedRequestMap = new Map<string, string>();
+        for (const r of receivedRequests) {
+          receivedRequestMap.set(r.senderId, r.id);
+        }
+
+        const blockedSet = new Set<string>();
+        for (const b of blocks) {
+          if (b.blockerId === userId) blockedSet.add(b.blockedId);
+          if (b.blockedId === userId) blockedSet.add(b.blockerId);
+        }
+
+        const data = {
+          friendIdSet,
+          sentRequestSet,
+          receivedRequestMap,
+          blockedSet,
+        };
+
+        this.userRelationshipsCache.set(userId, { data, expiresAt: Date.now() + 6000 });
+        return data;
+      } finally {
+        this.inFlightRelationships.delete(userId);
+      }
+    })();
+
+    this.inFlightRelationships.set(userId, promise);
+    return promise;
   }
 
   // ==========================================
@@ -126,6 +225,9 @@ export class FriendsService {
       body: `${senderName} sent you a friend request.`,
       data: { senderId, requestId: request.id },
     });
+
+    this.invalidateUserRelationships(senderId);
+    this.invalidateUserRelationships(receiverId);
 
     return {
       message: 'Friend request sent',
@@ -285,6 +387,9 @@ export class FriendsService {
       data: { friendId: userId, chatId: result.chat.id },
     });
 
+    this.invalidateUserRelationships(request.senderId);
+    this.invalidateUserRelationships(userId);
+
     return {
       message: 'Friend request accepted',
       friendshipId: result.friendship.id,
@@ -330,6 +435,9 @@ export class FriendsService {
         },
       });
 
+    this.invalidateUserRelationships(request.senderId);
+    this.invalidateUserRelationships(userId);
+
     return {
       message: 'Friend request rejected',
       requestId: updatedRequest.id,
@@ -342,74 +450,101 @@ export class FriendsService {
   // ==========================================
 
   async getFriends(userId: string) {
-    const friendships = await this.prisma.friendship.findMany({
-      where: {
-        OR: [
-          {
-            userAId: userId,
-          },
-          {
-            userBId: userId,
-          },
-        ],
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-      include: {
-        userA: {
-          select: {
-            id: true,
-            username: true,
-            age: true,
-            gender: true,
-            avatar: true,
-            lastSeenAt: true,
-          },
-        },
-        userB: {
-          select: {
-            id: true,
-            username: true,
-            age: true,
-            gender: true,
-            avatar: true,
-            lastSeenAt: true,
-          },
-        },
-        chat: {
-          select: {
-            id: true,
-          },
-        },
-      },
-    });
+    const now = Date.now();
+    const cached = this.friendsCache.get(userId);
+    if (cached && now < cached.expiresAt) {
+      return cached.data;
+    }
 
-    return Promise.all(
-      friendships.map(async (friendship) => {
-        const friend =
-          friendship.userAId === userId
-            ? friendship.userB
-            : friendship.userA;
+    const inFlight = this.inFlightFriends.get(userId);
+    if (inFlight) {
+      return inFlight;
+    }
 
-        let isOnline = false;
-        if (this.presenceChecker) {
+    const promise = (async () => {
+      try {
+        const friendships = await this.prisma.friendship.findMany({
+          where: {
+            OR: [
+              {
+                userAId: userId,
+              },
+              {
+                userBId: userId,
+              },
+            ],
+          },
+          orderBy: {
+            createdAt: 'desc',
+          },
+          include: {
+            userA: {
+              select: {
+                id: true,
+                username: true,
+                age: true,
+                gender: true,
+                avatar: true,
+                lastSeenAt: true,
+              },
+            },
+            userB: {
+              select: {
+                id: true,
+                username: true,
+                age: true,
+                gender: true,
+                avatar: true,
+                lastSeenAt: true,
+              },
+            },
+            chat: {
+              select: {
+                id: true,
+              },
+            },
+          },
+        });
+
+        const friendIds = friendships.map((f) =>
+          f.userAId === userId ? f.userB.id : f.userA.id,
+        );
+
+        let onlineSet = new Set<string>();
+        if (this.batchPresenceChecker && friendIds.length > 0) {
           try {
-            isOnline = await this.presenceChecker(friend.id);
+            onlineSet = await this.batchPresenceChecker(friendIds);
           } catch {}
         }
 
-        return {
-          friendshipId: friendship.id,
-          createdAt: friendship.createdAt,
-          chatId: friendship.chatId,
-          friend: {
-            ...friend,
-            isOnline,
-          },
-        };
-      }),
-    );
+        const results = friendships.map((friendship) => {
+          const friend =
+            friendship.userAId === userId
+              ? friendship.userB
+              : friendship.userA;
+
+          const isOnline = onlineSet.has(friend.id);
+
+          return {
+            friendshipId: friendship.id,
+            createdAt: friendship.createdAt,
+            chatId: friendship.chatId,
+            friend: {
+              ...friend,
+              isOnline,
+            },
+          };
+        });
+
+        this.friendsCache.set(userId, { data: results, expiresAt: Date.now() + 5000 });
+        return results;
+      } finally {
+        this.inFlightFriends.delete(userId);
+      }
+    })();
+
+    this.inFlightFriends.set(userId, promise);
+    return promise;
   }
 
   // ==========================================
@@ -545,6 +680,9 @@ export class FriendsService {
       });
     });
 
+    this.invalidateUserRelationships(userId);
+    this.invalidateUserRelationships(friendId);
+
     return {
       message: 'Friend removed',
     };
@@ -555,7 +693,7 @@ export class FriendsService {
   // ==========================================
 
   async searchUsers(currentUserId: string, query: string) {
-    const trimmed = (query || '').trim();
+    const trimmed = (query || '').trim().replace(/^@/, '').trim();
     if (!trimmed) {
       return [];
     }
@@ -711,7 +849,7 @@ export class FriendsService {
   }) {
     const { currentUserId, query, onlineOnly, gender, interests, limit = 20, offset = 0 } = params;
 
-    const trimmed = (query || '').trim();
+    const trimmed = (query || '').trim().replace(/^@/, '').trim();
     const whereClause: any = {
       id: { not: currentUserId },
       isBanned: false,
@@ -735,33 +873,56 @@ export class FriendsService {
 
     // 3. Interests filter
     if (interests && Array.isArray(interests) && interests.length > 0) {
-      whereClause.interests = {
-        hasSome: interests,
-      };
+      const searchTerms = new Set<string>();
+      for (const i of interests) {
+        if (!i || typeof i !== 'string') continue;
+        const raw = i.trim();
+        const canon = normalizeInterest(raw);
+        if (raw) searchTerms.add(raw);
+        if (canon) searchTerms.add(canon);
+        if (raw) searchTerms.add(raw.toLowerCase());
+        if (canon) searchTerms.add(canon.toLowerCase());
+      }
+      if (searchTerms.size > 0) {
+        whereClause.interests = {
+          hasSome: Array.from(searchTerms),
+        };
+      }
     }
 
     // Fetch users (if onlineOnly is requested, fetch a slightly larger batch to filter online users)
     const fetchLimit = onlineOnly ? Math.max(limit * 3, 60) : limit;
 
-    const matchingUsers = await this.prisma.user.findMany({
-      where: whereClause,
-      select: {
-        id: true,
-        username: true,
-        age: true,
-        gender: true,
-        avatar: true,
-        language: true,
-        interests: true,
-        goal: true,
-        lastSeenAt: true,
-      },
-      skip: offset,
-      take: fetchLimit,
-      orderBy: {
-        lastSeenAt: 'desc',
-      },
-    });
+    // Run user query and relationship query in parallel for reduced round-trips
+    const [matchingUsers, relationships] = await Promise.all([
+      this.prisma.user.findMany({
+        where: whereClause,
+        select: {
+          id: true,
+          username: true,
+          age: true,
+          gender: true,
+          avatar: true,
+          language: true,
+          interests: true,
+          goal: true,
+          lastSeenAt: true,
+        },
+        skip: offset,
+        take: fetchLimit,
+        orderBy: {
+          lastSeenAt: 'desc',
+        },
+      }),
+      currentUserId
+        ? this.getUserRelationships(currentUserId)
+        : Promise.resolve({
+            friendIdSet: new Set<string>(),
+            sentRequestSet: new Set<string>(),
+            receivedRequestMap: new Map<string, string>(),
+            blockedSet: new Set<string>(),
+          }),
+    ]);
 
     if (matchingUsers.length === 0) {
       return [];
@@ -769,108 +930,49 @@ export class FriendsService {
 
     const candidateIds = matchingUsers.map((u) => u.id);
 
-    // Fetch existing friendships
-    const friendships = await this.prisma.friendship.findMany({
-      where: {
-        OR: [
-          { userAId: currentUserId, userBId: { in: candidateIds } },
-          { userBId: currentUserId, userAId: { in: candidateIds } },
-        ],
-      },
-      select: {
-        userAId: true,
-        userBId: true,
-      },
-    });
+    const { friendIdSet, sentRequestSet, receivedRequestMap, blockedSet } = relationships;
 
-    const friendIdSet = new Set<string>();
-    for (const f of friendships) {
-      if (f.userAId === currentUserId) friendIdSet.add(f.userBId);
-      if (f.userBId === currentUserId) friendIdSet.add(f.userAId);
+    // Batch presence check via single Redis pipeline
+    let onlineSet = new Set<string>();
+    if (this.batchPresenceChecker && candidateIds.length > 0) {
+      try {
+        onlineSet = await this.batchPresenceChecker(candidateIds);
+      } catch {}
     }
 
-    // Fetch pending friend requests
-    const sentRequests = await this.prisma.friendRequest.findMany({
-      where: {
-        senderId: currentUserId,
-        receiverId: { in: candidateIds },
-        status: 'PENDING',
-      },
-      select: { receiverId: true },
+    // Map presence and relationship status synchronously
+    const mappedResults = matchingUsers.map((u) => {
+      const isOnline = onlineSet.has(u.id);
+
+      let relationshipStatus: 'none' | 'friends' | 'pending_sent' | 'pending_received' | 'blocked' = 'none';
+      let incomingRequestId: string | undefined = undefined;
+
+      if (blockedSet.has(u.id)) {
+        relationshipStatus = 'blocked';
+      } else if (friendIdSet.has(u.id)) {
+        relationshipStatus = 'friends';
+      } else if (sentRequestSet.has(u.id)) {
+        relationshipStatus = 'pending_sent';
+      } else if (receivedRequestMap.has(u.id)) {
+        relationshipStatus = 'pending_received';
+        incomingRequestId = receivedRequestMap.get(u.id);
+      }
+
+      return {
+        id: u.id,
+        username: u.username,
+        age: u.age,
+        gender: u.gender,
+        avatar: u.avatar,
+        language: u.language,
+        interests: u.interests,
+        goal: u.goal,
+        lastSeenAt: u.lastSeenAt,
+        isOnline,
+        relationshipStatus,
+        incomingRequestId,
+      };
     });
-    const sentRequestSet = new Set(sentRequests.map((r) => r.receiverId));
-
-    const receivedRequests = await this.prisma.friendRequest.findMany({
-      where: {
-        senderId: { in: candidateIds },
-        receiverId: currentUserId,
-        status: 'PENDING',
-      },
-      select: { id: true, senderId: true },
-    });
-    const receivedRequestMap = new Map<string, string>();
-    for (const r of receivedRequests) {
-      receivedRequestMap.set(r.senderId, r.id);
-    }
-
-    // Fetch blocks between users
-    const blocks = await this.prisma.block.findMany({
-      where: {
-        OR: [
-          { blockerId: currentUserId, blockedId: { in: candidateIds } },
-          { blockerId: { in: candidateIds }, blockedId: currentUserId },
-        ],
-      },
-      select: { blockerId: true, blockedId: true },
-    });
-    const blockedSet = new Set<string>();
-    for (const b of blocks) {
-      if (b.blockerId === currentUserId) blockedSet.add(b.blockedId);
-      if (b.blockedId === currentUserId) blockedSet.add(b.blockerId);
-    }
-
-    // Map presence and relationship status
-    const mappedResults = await Promise.all(
-      matchingUsers.map(async (u) => {
-        let isOnline = false;
-        if (this.presenceChecker) {
-          try {
-            isOnline = await this.presenceChecker(u.id);
-          } catch {
-            isOnline = false;
-          }
-        }
-
-        let relationshipStatus: 'none' | 'friends' | 'pending_sent' | 'pending_received' | 'blocked' = 'none';
-        let incomingRequestId: string | undefined = undefined;
-
-        if (blockedSet.has(u.id)) {
-          relationshipStatus = 'blocked';
-        } else if (friendIdSet.has(u.id)) {
-          relationshipStatus = 'friends';
-        } else if (sentRequestSet.has(u.id)) {
-          relationshipStatus = 'pending_sent';
-        } else if (receivedRequestMap.has(u.id)) {
-          relationshipStatus = 'pending_received';
-          incomingRequestId = receivedRequestMap.get(u.id);
-        }
-
-        return {
-          id: u.id,
-          username: u.username,
-          age: u.age,
-          gender: u.gender,
-          avatar: u.avatar,
-          language: u.language,
-          interests: u.interests,
-          goal: u.goal,
-          lastSeenAt: u.lastSeenAt,
-          isOnline,
-          relationshipStatus,
-          incomingRequestId,
-        };
-      }),
-    );
 
     // If online-only filter is requested, filter out offline users
     const finalResults = onlineOnly

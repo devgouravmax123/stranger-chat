@@ -1,4 +1,5 @@
 "use client";
+import { formatGoal } from "@/lib/interests";
 
 type UserProfile = {
   id: string;
@@ -24,13 +25,6 @@ export default function UserProfileModal({
     return null;
   }
 
-  const goalLabels: Record<string, string> = {
-    "casual-chat": "Casual Chat",
-    friendship: "Friendship",
-    learning: "Learning",
-    networking: "Networking",
-  };
-
   const genderLabels: Record<string, string> = {
     male: "Male",
     female: "Female",
@@ -38,9 +32,7 @@ export default function UserProfileModal({
     "prefer-not-to-say": "Prefer not to say",
   };
 
-  const displayGoal = user.goal
-    ? goalLabels[user.goal] || user.goal
-    : "Not specified";
+  const displayGoal = user.goal ? formatGoal(user.goal) : "Not specified";
 
   const displayGender = user.gender
     ? genderLabels[user.gender] || user.gender
@@ -48,6 +40,9 @@ export default function UserProfileModal({
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="user-profile-modal-title"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-fadeIn"
       onClick={onClose}
     >
@@ -57,7 +52,7 @@ export default function UserProfileModal({
       >
         {/* HEADER */}
         <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
-          <h2 className="text-lg font-semibold text-white">
+          <h2 id="user-profile-modal-title" className="text-lg font-semibold text-white">
             Profile
           </h2>
 

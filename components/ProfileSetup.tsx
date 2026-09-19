@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { BACKEND_URL } from "@/lib/api-config";
 
 type ProfileSetupProps = {
   userId: string;
@@ -122,14 +123,16 @@ export default function ProfileSetup({
       // SAVE BASIC PROFILE
       // ==========================================
 
+      const token = typeof window !== "undefined" ? sessionStorage.getItem("sc_session_token") : null;
       const response = await fetch(
-        `http://localhost:3001/users/${userId}/profile`,
+        `${BACKEND_URL}/users/${userId}/profile`,
         {
           method: "PUT",
 
           headers: {
             "Content-Type":
               "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
 
           body: JSON.stringify({
@@ -225,11 +228,8 @@ export default function ProfileSetup({
       {/* BRAND & HEADER */}
       {/* ====================================== */}
       <div className="text-center">
-        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-tr from-indigo-600 to-violet-500 text-white text-xl font-bold shadow-lg shadow-indigo-600/30 mx-auto">
-          ⚡
-        </div>
-        <h1 className="text-xl font-bold text-white mt-3.5 tracking-tight">
-          Chat<span className="text-indigo-400">Buddy</span>
+        <h1 className="text-2xl font-bold text-white tracking-tight">
+          Chi<span className="text-indigo-400">rp</span>
         </h1>
         <h2 className="text-base font-semibold text-zinc-200 mt-1">
           Create Your Profile
@@ -271,10 +271,11 @@ export default function ProfileSetup({
       {/* USERNAME */}
       {/* ====================================== */}
       <div className="mt-5">
-        <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">
+        <label htmlFor="profile-username" className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">
           Username
         </label>
         <input
+          id="profile-username"
           type="text"
           value={username}
           onChange={(event) => setUsername(event.target.value)}
@@ -293,10 +294,11 @@ export default function ProfileSetup({
       {/* ====================================== */}
       <div className="grid grid-cols-2 gap-3 mt-4">
         <div>
-          <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">
+          <label htmlFor="profile-age" className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">
             Age
           </label>
           <input
+            id="profile-age"
             type="number"
             value={age}
             onChange={(event) => setAge(event.target.value)}
@@ -309,10 +311,12 @@ export default function ProfileSetup({
         </div>
 
         <div>
-          <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">
+          <label htmlFor="profile-gender" className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">
             Gender
           </label>
           <select
+            id="profile-gender"
+            aria-label="Gender"
             value={gender}
             onChange={(event) => setGender(event.target.value)}
             disabled={saving}
@@ -331,7 +335,11 @@ export default function ProfileSetup({
       {/* ERROR MESSAGE */}
       {/* ====================================== */}
       {error && (
-        <div className="mt-4 rounded-xl bg-red-950/60 border border-red-800/80 px-4 py-2.5 flex items-center justify-center gap-2">
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="mt-4 rounded-xl bg-red-950/60 border border-red-800/80 px-4 py-2.5 flex items-center justify-center gap-2"
+        >
           <span>⚠️</span>
           <p className="text-xs text-red-300 font-medium">
             {error}
@@ -354,7 +362,7 @@ export default function ProfileSetup({
             <span>Creating profile...</span>
           </>
         ) : (
-          <span>Enter ChatBuddy ⚡</span>
+          <span>Enter Chirp</span>
         )}
       </button>
     </div>

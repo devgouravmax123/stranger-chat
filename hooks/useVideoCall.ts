@@ -33,6 +33,7 @@ interface UseVideoCallOptions {
   roomId: string | null;
   userId: string | null;
   strangerUserId: string | null;
+  chatType?: "stranger" | "friend";
   onNotification?: (message: string) => void;
   rtcConfig?: RTCConfiguration;
 }
@@ -42,6 +43,7 @@ export function useVideoCall({
   roomId,
   userId,
   strangerUserId,
+  chatType = "stranger",
   onNotification,
   rtcConfig = DEFAULT_RTC_CONFIG,
 }: UseVideoCallOptions) {
@@ -61,9 +63,11 @@ export function useVideoCall({
   // References to keep callbacks fresh and avoid race conditions
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const remoteStreamRef = useRef<MediaStream | null>(null);
   const pendingCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
   const callIdRef = useRef<string | null>(null);
   const roomIdRef = useRef<string | null>(roomId);
+  const userIdRef = useRef<string | null>(userId);
   const callStateRef = useRef<CallState>("idle");
 
   // Concurrency and timeout references
@@ -75,6 +79,7 @@ export function useVideoCall({
 
   // Keep refs in sync with state
   roomIdRef.current = roomId;
+  userIdRef.current = userId;
   callStateRef.current = callState;
   callIdRef.current = callId;
 
@@ -110,8 +115,28 @@ export function useVideoCall({
       localStreamRef.current = null;
     }
 
-    // 2. Close and destroy RTCPeerConnection
+    // 2. Stop and clear remote stream tracks
+    if (remoteStreamRef.current) {
+      remoteStreamRef.current.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch {}
+      });
+      remoteStreamRef.current = null;
+    }
+
+    // 3. Stop all sender tracks, close and destroy RTCPeerConnection
     if (peerConnectionRef.current) {
+      try {
+        peerConnectionRef.current.getSenders().forEach((sender) => {
+          if (sender.track) {
+            try {
+              sender.track.stop();
+              sender.track.enabled = false;
+            } catch {}
+          }
+        });
+      } catch {}
       try {
         peerConnectionRef.current.onicecandidate = null;
         peerConnectionRef.current.ontrack = null;
@@ -124,7 +149,7 @@ export function useVideoCall({
       peerConnectionRef.current = null;
     }
 
-    // 3. Clear pending candidates and streams
+    // 4. Clear pending candidates and streams
     pendingCandidatesRef.current = [];
     setLocalStream(null);
     setRemoteStream(null);
@@ -173,20 +198,45 @@ export function useVideoCall({
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          facingMode: "user",
-        },
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-        },
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            facingMode: "user",
+          },
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+      } catch (constraintErr: any) {
+        console.warn("[VideoCall] getUserMedia with constraints failed, retrying with basic constraints", constraintErr);
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: true,
+        });
+      }
+
+      const audioTracks = stream.getAudioTracks();
+      const videoTracks = stream.getVideoTracks();
+
+      console.log(
+        `[VideoCall] Acquired local media - audio: ${audioTracks.length}, video: ${videoTracks.length}`
+      );
+
+      // Verify and guarantee active track state for new call
+      audioTracks.forEach((track) => {
+        track.enabled = true;
+      });
+      videoTracks.forEach((track) => {
+        track.enabled = true;
       });
 
       // Listen for hardware track disconnects / device changes
-      stream.getVideoTracks().forEach((track) => {
+      videoTracks.forEach((track) => {
         track.onended = () => {
           console.warn("[VideoCall] Camera track ended unexpectedly");
           setIsCameraOff(true);
@@ -194,7 +244,7 @@ export function useVideoCall({
         };
       });
 
-      stream.getAudioTracks().forEach((track) => {
+      audioTracks.forEach((track) => {
         track.onended = () => {
           console.warn("[VideoCall] Audio track ended unexpectedly");
           setIsMicMuted(true);
@@ -211,13 +261,48 @@ export function useVideoCall({
     } catch (err: any) {
       console.warn("[VideoCall] getUserMedia error:", err);
       let friendlyMsg = "Camera and microphone access is required for video calling.";
+
       if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
-        friendlyMsg = "Camera and microphone access is required for video calling.";
+        try {
+          if (navigator.permissions && typeof navigator.permissions.query === "function") {
+            const [micPerm, camPerm] = await Promise.all([
+              navigator.permissions.query({ name: "microphone" as PermissionName }).catch(() => null),
+              navigator.permissions.query({ name: "camera" as PermissionName }).catch(() => null),
+            ]);
+            if (micPerm?.state === "denied" && camPerm?.state !== "denied") {
+              friendlyMsg = "Microphone access is required for video calling.";
+            } else if (camPerm?.state === "denied" && micPerm?.state !== "denied") {
+              friendlyMsg = "Camera access is required for video calling.";
+            } else {
+              friendlyMsg = "Camera and microphone access are required for video calling.";
+            }
+          }
+        } catch {
+          friendlyMsg = "Camera and microphone access are required for video calling.";
+        }
       } else if (err.name === "NotFoundError" || err.name === "DevicesNotFoundError") {
-        friendlyMsg = "No camera or microphone device was found on your system.";
+        try {
+          if (navigator.mediaDevices && typeof navigator.mediaDevices.enumerateDevices === "function") {
+            const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+            const hasMic = devices.some((d) => d.kind === "audioinput");
+            const hasCam = devices.some((d) => d.kind === "videoinput");
+            if (!hasMic && hasCam) {
+              friendlyMsg = "Your microphone isn't available right now.";
+            } else if (!hasCam && hasMic) {
+              friendlyMsg = "No camera was found on your system.";
+            } else {
+              friendlyMsg = "No camera or microphone device was found on your system.";
+            }
+          } else {
+            friendlyMsg = "Your microphone isn't available right now.";
+          }
+        } catch {
+          friendlyMsg = "Your microphone isn't available right now.";
+        }
       } else if (err.name === "NotReadableError" || err.name === "TrackStartError") {
         friendlyMsg = "Your camera or microphone isn't available right now. You can continue chatting by text.";
       }
+
       setErrorMessage(friendlyMsg);
       onNotification?.(friendlyMsg);
       return null;
@@ -238,6 +323,12 @@ export function useVideoCall({
       peerConnectionRef.current = pc;
 
       // Add local media tracks to peer connection
+      const localAudioTracks = stream.getAudioTracks();
+      const localVideoTracks = stream.getVideoTracks();
+      console.log(
+        `[VideoCall] Adding local tracks to PC: audio=${localAudioTracks.length}, video=${localVideoTracks.length}`
+      );
+
       stream.getTracks().forEach((track) => {
         pc.addTrack(track, stream);
       });
@@ -253,22 +344,46 @@ export function useVideoCall({
         }
       };
 
-      // Handle receiving remote tracks
+      // Handle receiving remote tracks (audio and video)
       pc.ontrack = (event) => {
-        console.log("[VideoCall] Received remote track:", event.track.kind);
+        console.log(
+          `[VideoCall] Remote track arrived: kind=${event.track.kind}, id=${event.track.id}, readyState=${event.track.readyState}`
+        );
+
+        if (!remoteStreamRef.current) {
+          remoteStreamRef.current = new MediaStream();
+        }
+
+        // Add arriving track to persistent remote stream if not already present
+        if (!remoteStreamRef.current.getTracks().some((t) => t.id === event.track.id)) {
+          remoteStreamRef.current.addTrack(event.track);
+        }
+
+        // Include any additional tracks from event.streams[0] if provided
         if (event.streams && event.streams[0]) {
-          setRemoteStream(event.streams[0]);
-        } else {
-          setRemoteStream((prev) => {
-            const newStream = prev || new MediaStream();
-            newStream.addTrack(event.track);
-            return newStream;
+          event.streams[0].getTracks().forEach((track) => {
+            if (!remoteStreamRef.current?.getTracks().some((t) => t.id === track.id)) {
+              remoteStreamRef.current?.addTrack(track);
+            }
           });
         }
+
+        // Create fresh MediaStream reference with current tracks so React state updates reliably
+        const currentTracks = remoteStreamRef.current.getTracks();
+        console.log(
+          `[VideoCall] Remote stream tracks updated: total=${currentTracks.length} (audio=${remoteStreamRef.current.getAudioTracks().length}, video=${remoteStreamRef.current.getVideoTracks().length})`
+        );
+        const updatedStream = new MediaStream(currentTracks);
+        setRemoteStream(updatedStream);
 
         if (event.track.kind === "video") {
           event.track.onmute = () => setIsRemoteCameraOff(true);
           event.track.onunmute = () => setIsRemoteCameraOff(false);
+        }
+        if (event.track.kind === "audio") {
+          console.log(
+            `[VideoCall] Remote audio track live: enabled=${event.track.enabled}, readyState=${event.track.readyState}`
+          );
         }
       };
 
@@ -519,6 +634,15 @@ export function useVideoCall({
 
   // End Call (by either caller or receiver)
   const endCall = useCallback(() => {
+    const currentState = callStateRef.current;
+    const isCallActive =
+      currentState === "calling" ||
+      currentState === "incoming" ||
+      currentState === "connecting" ||
+      currentState === "connected";
+
+    if (!isCallActive) return;
+
     if (socket && roomIdRef.current && callIdRef.current) {
       socket.emit("video_call_ended", {
         roomId: roomIdRef.current,
@@ -531,29 +655,104 @@ export function useVideoCall({
 
   // Mute / Unmute Microphone
   const toggleMute = useCallback(() => {
-    if (!localStreamRef.current) return;
-    const audioTracks = localStreamRef.current.getAudioTracks();
-    if (audioTracks.length === 0) return;
+    // 1. Gather all outgoing audio tracks across stream, senders, and transceivers
+    const targetTracks = new Set<MediaStreamTrack>();
 
-    const nextState = !isMicMuted;
-    audioTracks.forEach((track) => {
-      track.enabled = !nextState;
+    if (localStreamRef.current) {
+      localStreamRef.current.getAudioTracks().forEach((track) => {
+        targetTracks.add(track);
+      });
+    }
+
+    if (peerConnectionRef.current) {
+      try {
+        peerConnectionRef.current.getSenders().forEach((sender) => {
+          if (sender.track && sender.track.kind === "audio") {
+            targetTracks.add(sender.track);
+          }
+        });
+      } catch {}
+
+      try {
+        peerConnectionRef.current.getTransceivers().forEach((transceiver) => {
+          if (transceiver.sender?.track && transceiver.sender.track.kind === "audio") {
+            targetTracks.add(transceiver.sender.track);
+          }
+        });
+      } catch {}
+    }
+
+    if (targetTracks.size === 0) {
+      console.warn("[VideoCall] No audio tracks found to toggle mute.");
+      return;
+    }
+
+    // 2. Derive next state based on actual real hardware track state (Requirement 10)
+    // If any active track is enabled, the microphone is currently transmitting -> MUTE IT (false).
+    // If all tracks are disabled, the microphone is currently muted -> UNMUTE IT (true).
+    const isTransmitting = Array.from(targetTracks).some(
+      (t) => t.enabled && t.readyState === "live"
+    );
+    const shouldEnable = !isTransmitting;
+
+    // 3. Apply state to ALL outgoing audio tracks and senders
+    targetTracks.forEach((track) => {
+      track.enabled = shouldEnable;
     });
-    setIsMicMuted(nextState);
-  }, [isMicMuted]);
+
+    // 4. Update UI state to match the REAL WebRTC microphone state
+    setIsMicMuted(!shouldEnable);
+
+    console.log(
+      `[VideoCall] Microphone toggled: ${shouldEnable ? "UNMUTED" : "MUTED"} across ${targetTracks.size} track(s)`
+    );
+  }, []);
 
   // Camera On / Off
   const toggleCamera = useCallback(() => {
-    if (!localStreamRef.current) return;
-    const videoTracks = localStreamRef.current.getVideoTracks();
-    if (videoTracks.length === 0) return;
+    const targetTracks = new Set<MediaStreamTrack>();
 
-    const nextState = !isCameraOff;
-    videoTracks.forEach((track) => {
-      track.enabled = !nextState;
+    if (localStreamRef.current) {
+      localStreamRef.current.getVideoTracks().forEach((track) => {
+        targetTracks.add(track);
+      });
+    }
+
+    if (peerConnectionRef.current) {
+      try {
+        peerConnectionRef.current.getSenders().forEach((sender) => {
+          if (sender.track && sender.track.kind === "video") {
+            targetTracks.add(sender.track);
+          }
+        });
+      } catch {}
+
+      try {
+        peerConnectionRef.current.getTransceivers().forEach((transceiver) => {
+          if (transceiver.sender?.track && transceiver.sender.track.kind === "video") {
+            targetTracks.add(transceiver.sender.track);
+          }
+        });
+      } catch {}
+    }
+
+    if (targetTracks.size === 0) return;
+
+    const isTransmitting = Array.from(targetTracks).some(
+      (t) => t.enabled && t.readyState === "live"
+    );
+    const shouldEnable = !isTransmitting;
+
+    targetTracks.forEach((track) => {
+      track.enabled = shouldEnable;
     });
-    setIsCameraOff(nextState);
-  }, [isCameraOff]);
+
+    setIsCameraOff(!shouldEnable);
+
+    console.log(
+      `[VideoCall] Camera toggled: ${shouldEnable ? "ON" : "OFF"} across ${targetTracks.size} track(s)`
+    );
+  }, []);
 
   // ==========================================
   // SOCKET SIGNALING LISTENERS
@@ -571,7 +770,19 @@ export function useVideoCall({
       callerAvatar?: string;
       chatType?: string;
     }) => {
-      if (roomIdRef.current && data.roomId !== roomIdRef.current) return;
+      // Validate basic payload structure
+      if (!data || typeof data !== "object") return;
+      if (typeof data.roomId !== "string" || !data.roomId.trim()) return;
+      if (typeof data.callId !== "string" || !data.callId.trim()) return;
+
+      // STRICT ROOM ISOLATION: Hook only processes incoming call if it has an active matching room
+      if (!roomIdRef.current || data.roomId !== roomIdRef.current) return;
+
+      // CHAT TYPE ISOLATION: Stranger hook only handles stranger calls, friend hook only handles friend calls
+      if (chatType && data.chatType && data.chatType !== chatType) return;
+
+      // Ignore if call is from ourselves
+      if (userIdRef.current && data.callerUserId && data.callerUserId === userIdRef.current) return;
 
       // Deduplicate: ignore duplicate packet for the same ongoing call attempt
       if (callIdRef.current === data.callId) return;
@@ -664,7 +875,10 @@ export function useVideoCall({
         await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
         await drainPendingCandidates(pc);
 
-        const answer = await pc.createAnswer();
+        const answer = await pc.createAnswer({
+          offerToReceiveAudio: true,
+          offerToReceiveVideo: true,
+        });
         await pc.setLocalDescription(answer);
 
         socket.emit("video_answer", {
@@ -718,7 +932,8 @@ export function useVideoCall({
 
     // 6. Call Declined (Caller)
     const handleCallDeclined = (data: { roomId: string; callId?: string; reason?: string }) => {
-      if (data.roomId !== roomIdRef.current) return;
+      if (!data || data.roomId !== roomIdRef.current) return;
+      if (callStateRef.current !== "calling") return;
       if (data.callId && callIdRef.current && data.callId !== callIdRef.current) return;
       teardownCall();
       if (data.reason === "busy") {
@@ -732,7 +947,8 @@ export function useVideoCall({
 
     // 7. Call Cancelled (Receiver)
     const handleCallCancelled = (data: { roomId: string; callId?: string }) => {
-      if (data.roomId !== roomIdRef.current) return;
+      if (!data || data.roomId !== roomIdRef.current) return;
+      if (callStateRef.current !== "incoming") return;
       if (data.callId && callIdRef.current && data.callId !== callIdRef.current) return;
       teardownCall();
       onNotification?.("The video call was cancelled.");
@@ -740,7 +956,18 @@ export function useVideoCall({
 
     // 8. Call Ended (Both)
     const handleCallEnded = (data: { roomId: string; callId?: string }) => {
-      if (data.roomId !== roomIdRef.current) return;
+      if (!data || data.roomId !== roomIdRef.current) return;
+
+      const currentState = callStateRef.current;
+      const isCallActive =
+        currentState === "calling" ||
+        currentState === "incoming" ||
+        currentState === "connecting" ||
+        currentState === "connected";
+
+      // DEFENSE IN DEPTH: If no video call was active, ignore any phantom ended event
+      if (!isCallActive) return;
+
       if (data.callId && callIdRef.current && data.callId !== callIdRef.current) return;
       teardownCall();
       onNotification?.("The video call has ended.");

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { BACKEND_URL } from "@/lib/api-config";
 
 export type SearchUserResult = {
   id: string;
@@ -72,7 +73,7 @@ export default function SearchFriendsView({
 
     try {
       const res = await fetch(
-        `http://localhost:3001/friends/search?userId=${encodeURIComponent(
+        `${BACKEND_URL}/friends/search?userId=${encodeURIComponent(
           currentUserId
         )}&q=${encodeURIComponent(trimmed)}`
       );
@@ -134,7 +135,7 @@ export default function SearchFriendsView({
   const handleSendFriendRequest = async (targetUserId: string) => {
     setSendingRequestIds((prev) => ({ ...prev, [targetUserId]: true }));
     try {
-      const res = await fetch("http://localhost:3001/friends/request", {
+      const res = await fetch(`${BACKEND_URL}/friends/request`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -204,7 +205,7 @@ export default function SearchFriendsView({
                 <span>Search Friends</span>
               </h1>
               <p className="text-xs text-zinc-400 mt-0.5">
-                Find ChatBuddy users worldwide by username
+                Find Chirp users worldwide by username
               </p>
             </div>
           </div>
@@ -219,6 +220,7 @@ export default function SearchFriendsView({
               </span>
               <input
                 type="text"
+                aria-label="Search friends by username"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search by username (e.g. Alex, Maya)..."
@@ -231,6 +233,7 @@ export default function SearchFriendsView({
                   onClick={handleClear}
                   className="absolute inset-y-0 right-3 flex items-center text-zinc-400 hover:text-white text-sm"
                   title="Clear search"
+                  aria-label="Clear search"
                 >
                   ✕
                 </button>
@@ -266,14 +269,14 @@ export default function SearchFriendsView({
           {isLoading ? (
             <div className="py-16 text-center">
               <div className="animate-spin h-8 w-8 border-2 border-indigo-500/30 border-t-indigo-500 rounded-full mx-auto" />
-              <p className="mt-4 text-xs text-zinc-400">Searching ChatBuddy directory...</p>
+              <p className="mt-4 text-xs text-zinc-400">Searching Chirp directory...</p>
             </div>
           ) : !hasSearched && !query ? (
             <div className="py-16 text-center max-w-sm mx-auto">
               <div className="w-12 h-12 rounded-2xl bg-indigo-600/10 border border-indigo-500/20 text-indigo-400 flex items-center justify-center text-2xl mx-auto mb-3">
                 👥
               </div>
-              <h3 className="text-sm font-bold text-white">Find People on ChatBuddy</h3>
+              <h3 className="text-sm font-bold text-white">Find People on Chirp</h3>
               <p className="text-xs text-zinc-400 mt-1.5 leading-relaxed">
                 Type any username above to find friends, view their profiles, and send private chat requests.
               </p>
@@ -285,7 +288,7 @@ export default function SearchFriendsView({
               </div>
               <h3 className="text-sm font-bold text-white">No users found</h3>
               <p className="text-xs text-zinc-400 mt-1.5 leading-relaxed">
-                No ChatBuddy users matched <span className="text-indigo-400 font-semibold">"{query}"</span>. Try searching with a different spelling.
+                No Chirp users matched <span className="text-indigo-400 font-semibold">"{query}"</span>. Try searching with a different spelling.
               </p>
             </div>
           ) : (
