@@ -49,6 +49,9 @@ backend/src/generated/
 
 coverage/
 .nyc_output/
+playwright-report/
+test-results/
+load-tests/bin/
 
 
 # ==========================================
