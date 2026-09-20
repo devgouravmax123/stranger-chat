@@ -2,10 +2,15 @@
  * Chirp - Centralized API & Backend Configuration
  *
  * Provides environment-driven backend URL resolution for REST endpoints and Socket.IO.
- * In development, defaults to http://localhost:3001.
- * In production, reads NEXT_PUBLIC_BACKEND_URL.
+ * In production, reads NEXT_PUBLIC_API_URL (or NEXT_PUBLIC_BACKEND_URL).
+ * In development, falls back to http://localhost:3001.
+ * Automatically trims trailing slashes to prevent connection and CORS routing issues.
  */
 
-export const BACKEND_URL: string =
-  (typeof process !== "undefined" && process.env.NEXT_PUBLIC_BACKEND_URL) ||
+const rawBackendUrl: string =
+  process.env.NEXT_PUBLIC_API_URL ||
+  process.env.NEXT_PUBLIC_BACKEND_URL ||
   "http://localhost:3001";
+
+export const BACKEND_URL: string = rawBackendUrl.trim().replace(/\/+$/, "");
+
