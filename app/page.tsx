@@ -453,11 +453,11 @@ export default function Home() {
       };
 
       // For fresh visitors (no stored token), ensure the branded Chirp loading screen
-      // displays for a minimum of ~1.8 seconds before transitioning to Profile Setup.
+      // displays for a minimum of ~2.0 seconds before transitioning to Profile Setup.
       // If returning user with valid token, transition immediately when ready.
       if (!storedToken) {
         const elapsed = Date.now() - startTime;
-        const remainingDelay = Math.max(0, 1800 - elapsed);
+        const remainingDelay = Math.max(0, 2000 - elapsed);
         if (remainingDelay > 0) {
           timerId = setTimeout(completeBootstrap, remainingDelay);
         } else {
