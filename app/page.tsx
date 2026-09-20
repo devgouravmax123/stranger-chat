@@ -183,6 +183,7 @@ export default function Home() {
   const [authBootstrapped, setAuthBootstrapped] = useState(false);
   const [isAccountDeleted, setIsAccountDeleted] = useState(false);
   const isAccountDeletedRef = useRef(false);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
 
   // Global user profile state (single source of truth)
   const [currentUserProfile, setCurrentUserProfile] = useState<UserProfile | null>(null);
@@ -2056,6 +2057,7 @@ export default function Home() {
 
   const handleDeleteAccount = async () => {
     if (!userId) return;
+    setIsDeletingAccount(true);
     try {
       videoCall.teardownCall();
       friendVideoCall.teardownCall();
@@ -2115,8 +2117,57 @@ export default function Home() {
     } catch (err: any) {
       console.error("Account deletion failed:", err);
       showNotification("Failed to delete account. Please try again.");
+    } finally {
+      setIsDeletingAccount(false);
     }
   };
+
+  // ==========================================
+  // RENDER: BRANDED CHIRP LOADING SCREEN
+  // Shown during initial auth bootstrap or account deletion teardown
+  // ==========================================
+
+  if (!authBootstrapped || isDeletingAccount) {
+    return (
+      <main className="min-h-screen relative flex items-center justify-center p-4 bg-[#030308] overflow-hidden select-none">
+        <GalaxyBackground />
+        <div className="relative z-10 w-full max-w-sm mx-auto flex flex-col items-center text-center px-6 py-8 rounded-3xl bg-zinc-900/80 backdrop-blur-xl border border-zinc-800/80 shadow-[0_0_50px_-12px_rgba(99,102,241,0.25)] transition-all">
+          {/* Logo & subtle ambient glow */}
+          <div className="relative mb-5 flex items-center justify-center">
+            <div className="absolute -inset-3 bg-indigo-500/20 rounded-full blur-xl pointer-events-none animate-pulse" />
+            <div className="relative h-14 w-14 rounded-2xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-purple-500 p-[1.5px] shadow-lg shadow-indigo-500/30">
+              <div className="w-full h-full bg-zinc-950 rounded-[14px] flex items-center justify-center">
+                <span className="text-2xl font-black tracking-tight text-white">
+                  C<span className="text-indigo-400 font-bold">h</span>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Brand Wordmark */}
+          <h1 className="text-2xl font-extrabold text-white tracking-tight">
+            Chi<span className="text-indigo-400">rp</span>
+          </h1>
+
+          {/* Branded Loading Message */}
+          <p className="mt-2 text-sm text-zinc-300 font-medium">
+            {isDeletingAccount ? "Signing out and resetting..." : "Connecting you to the world..."}
+          </p>
+
+          {/* Sleek Pulsing / Typing Activity Indicator */}
+          <div className="mt-6 flex items-center gap-2">
+            <span className="h-2 w-2 rounded-full bg-indigo-500 animate-pulse [animation-delay:-0.3s]" />
+            <span className="h-2 w-2 rounded-full bg-indigo-400 animate-pulse [animation-delay:-0.15s]" />
+            <span className="h-2 w-2 rounded-full bg-purple-400 animate-pulse" />
+          </div>
+
+          <p className="mt-4 text-[11px] text-zinc-500 font-mono tracking-wide">
+            {isDeletingAccount ? "CLEANING UP" : "INITIALIZING CHIRP"}
+          </p>
+        </div>
+      </main>
+    );
+  }
 
   // ==========================================
   // RENDER: FIRST-TIME PROFILE SETUP / POST-DELETION
@@ -2157,27 +2208,6 @@ export default function Home() {
   }
 
   // ==========================================
-  // RENDER: LOADING CONNECTION
-  // ==========================================
-
-  if (!userId || checkingProfile) {
-    return (
-      <main className="min-h-screen relative flex items-center justify-center p-4 bg-[#030308] overflow-hidden">
-        <GalaxyBackground />
-        <div className="relative z-10 w-full max-w-md bg-zinc-900/90 backdrop-blur-md border border-zinc-800 rounded-3xl p-8 shadow-2xl text-center">
-          <h1 className="text-2xl font-bold text-white tracking-tight">
-            Chi<span className="text-indigo-400">rp</span>
-          </h1>
-          <p className="mt-2 text-xs text-zinc-400">Loading your profile & connecting...</p>
-          <div className="mt-6">
-            <div className="animate-spin h-7 w-7 border-2 border-indigo-500/30 border-t-indigo-500 rounded-full mx-auto" />
-          </div>
-        </div>
-      </main>
-    );
-  }
-
-  // ==========================================
   // RENDER: NOTIFICATION BANNER
   // ==========================================
 
@@ -2210,7 +2240,7 @@ export default function Home() {
       <AiSuggestions
         conversationId={friendRoomId || friendChatId || selectedFriend?.id}
         messages={friendMessages}
-        currentUserId={userId}
+        currentUserId={userId || undefined}
         onSelectSuggestion={(text) => setFriendMessage(text)}
       />
       <MessageInput
