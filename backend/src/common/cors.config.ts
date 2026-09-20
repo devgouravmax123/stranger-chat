@@ -12,6 +12,19 @@ const DEFAULT_ORIGINS = [
 ];
 
 /**
+ * Matches official Vercel preview deployments belonging to the stranger-chat project:
+ * e.g. https://stranger-chat-1dn68p8eu-gourav-080c.vercel.app
+ *
+ * Pattern breakdown:
+ * - ^https:\/\/stranger-chat-
+ * - [a-zA-Z0-9_-]+
+ * - \.vercel\.app$
+ *
+ * Rejects unrelated origins (e.g. evil-example.vercel.app, stranger-chat.otherdomain.com).
+ */
+export const VERCEL_PREVIEW_ORIGIN_REGEX = /^https:\/\/stranger-chat-[a-zA-Z0-9_-]+\.vercel\.app$/;
+
+/**
  * Normalizes an origin string by trimming whitespace and stripping trailing slashes.
  */
 export function normalizeOrigin(origin: string): string {
@@ -33,31 +46,55 @@ export function getAllowedOrigins(): string[] {
     .map((o) => normalizeOrigin(o))
     .filter((o) => o.length > 0);
 
-  // Always make sure default origins or configured origins are available if desired,
-  // or return the sanitized list. If production vercel url is known, include it if env matches.
   return origins.length > 0 ? origins : DEFAULT_ORIGINS.map(normalizeOrigin);
 }
 
 /**
- * Standard CORS origin checker/resolver compatible with Express (app.enableCors)
- * and Socket.IO (@WebSocketGateway).
+ * Checks if a given origin is allowed under the security policy:
+ * 1. Missing/undefined origin (e.g., server-to-server, mobile apps, curl) -> allowed
+ * 2. Explicitly configured origins (env vars or DEFAULT_ORIGINS including production) -> allowed
+ * 3. Vercel preview deployments matching https://stranger-chat-*.vercel.app -> allowed
+ * 4. Localhost ports in non-production environments -> allowed
+ * 5. All other origins -> rejected
  */
-export function isOriginAllowed(origin: string | undefined, callback?: (err: Error | null, allow?: boolean) => void): boolean | void {
-  // Allow requests with no origin (like mobile apps, curl, server-to-server)
+export function isAllowedOrigin(origin: string | undefined): boolean {
   if (!origin) {
-    if (callback) return callback(null, true);
     return true;
   }
 
   const cleanOrigin = normalizeOrigin(origin);
   const allowed = getAllowedOrigins();
 
-  const isAllowed = allowed.includes(cleanOrigin);
+  if (allowed.includes(cleanOrigin)) {
+    return true;
+  }
+
+  if (VERCEL_PREVIEW_ORIGIN_REGEX.test(cleanOrigin)) {
+    return true;
+  }
+
+  // In non-production, allow localhost development ports
+  if (process.env.NODE_ENV !== 'production' && /^http:\/\/localhost:\d+$/.test(cleanOrigin)) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Standard CORS origin checker/resolver compatible with Express (app.enableCors)
+ * and Socket.IO (@WebSocketGateway).
+ */
+export function isOriginAllowed(
+  origin: string | undefined,
+  callback?: (err: Error | null, allow?: boolean) => void,
+): boolean | void {
+  const allowed = isAllowedOrigin(origin);
 
   if (callback) {
-    return callback(null, isAllowed);
+    return callback(null, allowed);
   }
-  return isAllowed;
+  return allowed;
 }
 
 /**
@@ -65,20 +102,7 @@ export function isOriginAllowed(origin: string | undefined, callback?: (err: Err
  */
 export const corsOptions = {
   origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-    // If no origin (e.g. same-origin, curl, server-to-server), allow
-    if (!origin) {
-      return callback(null, true);
-    }
-
-    const cleanOrigin = normalizeOrigin(origin);
-    const allowed = getAllowedOrigins();
-
-    if (allowed.includes(cleanOrigin)) {
-      return callback(null, true);
-    }
-
-    // In non-production, be lenient with localhost ports
-    if (process.env.NODE_ENV !== 'production' && /^http:\/\/localhost:\d+$/.test(cleanOrigin)) {
+    if (isAllowedOrigin(origin)) {
       return callback(null, true);
     }
 
