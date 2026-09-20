@@ -2045,53 +2045,8 @@ export default function Home() {
   };
 
   // ==========================================
-  // ACCOUNT DELETION & LOGOUT
+  // LOG OUT & PERMANENT ACCOUNT DELETION
   // ==========================================
-
-  const handleLogout = () => {
-    videoCall.teardownCall();
-    friendVideoCall.teardownCall();
-    setIsVideoChatOpen(false);
-    setIsFriendVideoChatOpen(false);
-    setUnreadVideoChatCount(0);
-    setUnreadFriendVideoChatCount(0);
-
-    // Disconnect socket
-    if (socket) {
-      socket.disconnect();
-    }
-
-    // Wipe persistent and session auth
-    clearPersistedAuth();
-
-    // Clear all frontend state
-    setUserId(null);
-    userIdRef.current = null;
-    setCurrentUserProfile(null);
-    setFriends([]);
-    setFriendRequests([]);
-    setNotifications([]);
-    setUnreadNotificationsCount(0);
-    setMessages([]);
-    setFriendMessages([]);
-    setSelectedFriend(null);
-    setFriendRoomId(null);
-    setFriendChatId(null);
-    setStrangerRoomId(null);
-    setStrangerUserId(null);
-    setMatchScore(null);
-    setStrangerStatus("connecting");
-    setWaiting(false);
-    setProfileCompleted(false);
-    setCheckingProfile(false);
-    setCurrentView("profile-setup");
-    setIsSidebarOpen(false);
-
-    // Trigger fresh socket connection for new anonymous user identity
-    setSessionKey((prev) => prev + 1);
-
-    showNotification("Logged out successfully.");
-  };
 
   const handleDeleteAccount = async () => {
     if (!userId) return;
@@ -2117,6 +2072,7 @@ export default function Home() {
       // Disconnect socket cleanly
       if (socket) {
         socket.disconnect();
+        setSocket(null);
       }
 
       // Wipe all user-specific local and session storage
@@ -2141,14 +2097,11 @@ export default function Home() {
       setStrangerStatus("connecting");
       setWaiting(false);
       setProfileCompleted(false);
-      setCheckingProfile(true);
+      setCheckingProfile(false);
       setCurrentView("profile-setup");
       setIsSidebarOpen(false);
 
-      // Trigger socket re-initialization to obtain a brand new valid user identity
-      setSessionKey((prev) => prev + 1);
-
-      showNotification("Account permanently deleted. You can create a new profile.");
+      showNotification("Account permanently deleted and logged out.");
     } catch (err: any) {
       console.error("Account deletion failed:", err);
       showNotification("Failed to delete account. Please try again.");
@@ -2384,7 +2337,6 @@ export default function Home() {
           pendingRequestsCount={friendRequests.length}
           searchQuery={searchQuery}
           onSearchQueryChange={setSearchQuery}
-          onLogout={handleLogout}
           onDeleteAccount={handleDeleteAccount}
         />
 

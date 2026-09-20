@@ -15,6 +15,12 @@ describe('UsersService', () => {
         findUnique: vi.fn(),
         update: vi.fn(),
         delete: vi.fn(),
+        count: vi.fn().mockResolvedValue(5),
+      },
+      platformStats: {
+        findUnique: vi.fn(),
+        create: vi.fn().mockResolvedValue({ id: 'global', totalSignups: 5, totalDeletedAccounts: 0 }),
+        upsert: vi.fn(),
       },
       $transaction: vi.fn(async (cb) => {
         const txMock = {
@@ -45,7 +51,11 @@ describe('UsersService', () => {
             deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
           },
           user: {
+            update: vi.fn().mockResolvedValue({ id: 'user-1', username: 'NewUser' }),
             delete: vi.fn().mockResolvedValue({ id: 'user-1' }),
+          },
+          platformStats: {
+            upsert: vi.fn().mockResolvedValue({ id: 'global', totalSignups: 1, totalDeletedAccounts: 0 }),
           },
         };
         return cb(txMock);
@@ -218,6 +228,51 @@ describe('UsersService', () => {
       expect(mockRedis.cleanupUserRedisState).toHaveBeenCalledWith('user-to-delete');
       expect(result.success).toBe(true);
       expect(result.message).toContain('permanently deleted');
+    });
+  });
+
+  describe('PlatformStats Analytics', () => {
+    it('should initialize baseline totalSignups only if stats row does not exist', async () => {
+      mockPrisma.platformStats.findUnique.mockResolvedValueOnce(null);
+      mockPrisma.user.count.mockResolvedValueOnce(12);
+
+      await service.onModuleInit();
+
+      expect(mockPrisma.platformStats.findUnique).toHaveBeenCalledWith({ where: { id: 'global' } });
+      expect(mockPrisma.user.count).toHaveBeenCalledWith({ where: { username: { not: null } } });
+      expect(mockPrisma.platformStats.create).toHaveBeenCalledWith({
+        data: {
+          id: 'global',
+          totalSignups: 12,
+          totalDeletedAccounts: 0,
+        },
+      });
+    });
+
+    it('should do nothing if PlatformStats row already exists (preventing reset on restart)', async () => {
+      mockPrisma.platformStats.findUnique.mockResolvedValueOnce({
+        id: 'global',
+        totalSignups: 100,
+        totalDeletedAccounts: 20,
+      });
+
+      await service.onModuleInit();
+
+      expect(mockPrisma.platformStats.create).not.toHaveBeenCalled();
+      expect(mockPrisma.user.count).not.toHaveBeenCalled();
+    });
+
+    it('should atomically increment totalSignups when a user registers a username for the first time', async () => {
+      // User has username: null initially
+      mockPrisma.user.findUnique.mockResolvedValueOnce({ id: 'anon-1', username: null });
+
+      await service.updateProfile('anon-1', {
+        username: 'NewUser',
+        age: 21,
+        gender: 'Female',
+      });
+
+      expect(mockPrisma.$transaction).toHaveBeenCalled();
     });
   });
 });

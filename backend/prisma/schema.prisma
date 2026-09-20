@@ -251,3 +251,15 @@ model Notification {
   @@index([userId, isRead])
   @@index([userId, createdAt])
 }
+
+// ==========================================
+// PLATFORM STATISTICS (AGGREGATE ANALYTICS)
+// ==========================================
+
+model PlatformStats {
+  id                   String   @id @default("global")
+  totalSignups         Int      @default(0)
+  totalDeletedAccounts Int      @default(0)
+  updatedAt            DateTime @updatedAt
+}
+

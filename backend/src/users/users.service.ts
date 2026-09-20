@@ -2,6 +2,7 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  OnModuleInit,
 } from '@nestjs/common';
 
 import { PrismaService } from '../prisma.service.js';
@@ -12,13 +13,49 @@ import { normalizeInterest } from '../constants/interests.js';
 import { RedisService } from '../redis/redis.service.js';
 
 @Injectable()
-export class UsersService {
+export class UsersService implements OnModuleInit {
   private deletionHook?: (userId: string) => Promise<void>;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
   ) {}
+
+  async onModuleInit() {
+    await this.ensurePlatformStatsBaseline();
+  }
+
+  /**
+   * One-time baseline initialization for PlatformStats.
+   * If PlatformStats(id="global") already exists, it does absolutely nothing to the counters.
+   * If it does not exist, it seeds totalSignups with the count of already registered users.
+   * Subsequent server restarts will never reset or recalculate totalSignups.
+   */
+  private async ensurePlatformStatsBaseline() {
+    try {
+      const existingStats = await this.prisma.platformStats.findUnique({
+        where: { id: 'global' },
+      });
+
+      if (!existingStats) {
+        const registeredCount = await this.prisma.user.count({
+          where: { username: { not: null } },
+        });
+
+        await this.prisma.platformStats.create({
+          data: {
+            id: 'global',
+            totalSignups: registeredCount,
+            totalDeletedAccounts: 0,
+          },
+        }).catch(() => {
+          // If another process created it concurrently, safely ignore
+        });
+      }
+    } catch (err) {
+      console.warn('[PlatformStats] Warning checking stats baseline:', err);
+    }
+  }
 
   registerDeletionHook(hook: (userId: string) => Promise<void>) {
     this.deletionHook = hook;
@@ -94,6 +131,35 @@ export class UsersService {
 
     if (dto.goal !== undefined && typeof dto.goal === 'string') {
       profileData.goal = dto.goal.trim();
+    }
+
+    const isFirstTimeRegistration = !user.username && !!profileData.username;
+
+    if (isFirstTimeRegistration) {
+      return this.prisma.$transaction(async (tx) => {
+        const updated = await tx.user.update({
+          where: { id: userId },
+          data: profileData,
+          select: {
+            id: true,
+            username: true,
+            age: true,
+            gender: true,
+            avatar: true,
+            language: true,
+            interests: true,
+            goal: true,
+          },
+        });
+
+        await tx.platformStats.upsert({
+          where: { id: 'global' },
+          create: { id: 'global', totalSignups: 1, totalDeletedAccounts: 0 },
+          update: { totalSignups: { increment: 1 } },
+        });
+
+        return updated;
+      });
     }
 
     return this.prisma.user.update({
@@ -335,6 +401,13 @@ export class UsersService {
       // l. Finally delete user record
       await tx.user.delete({
         where: { id: userId },
+      });
+
+      // m. Atomically increment totalDeletedAccounts counter
+      await tx.platformStats.upsert({
+        where: { id: 'global' },
+        create: { id: 'global', totalSignups: 0, totalDeletedAccounts: 1 },
+        update: { totalDeletedAccounts: { increment: 1 } },
       });
     });
 
