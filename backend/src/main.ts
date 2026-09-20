@@ -5,6 +5,7 @@ import { config } from 'dotenv';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module.js'; // active redis connection
+import { corsOptions } from './common/cors.config.js';
 
 // Ensure backend/.env is loaded reliably regardless of working directory
 const candidateEnvPaths = [
@@ -43,11 +44,7 @@ async function bootstrap() {
     httpAdapter.set('trust proxy', trustValue);
   }
 
-  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-
-  app.enableCors({
-    origin: frontendUrl,
-  });
+  app.enableCors(corsOptions);
 
   app.useGlobalPipes(
     new ValidationPipe({

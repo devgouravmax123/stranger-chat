@@ -15,6 +15,7 @@ import { UsersService } from '../users/users.service.js';
 import { FriendsService } from '../friends/friends.service.js';
 import { MatchingService, MatchPreferences } from './matching.service.js';
 import { SessionTokenService } from '../auth/session-token.service.js';
+import { corsOptions } from '../common/cors.config.js';
 
 interface WaitingUser {
   socket: Socket;
@@ -80,9 +81,7 @@ export interface ActiveCallSession {
 }
 
 @WebSocketGateway({
-  cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-  },
+  cors: corsOptions,
   maxHttpBufferSize: 1e7,
 })
 export class ChatGateway implements OnGatewayInit {

@@ -9,11 +9,10 @@ import {
 import { Server, Socket } from 'socket.io';
 
 import { PrismaService } from '../prisma.service.js';
+import { corsOptions } from '../common/cors.config.js';
 
 @WebSocketGateway({
-  cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-  },
+  cors: corsOptions,
   maxHttpBufferSize: 1e7,
 })
 export class FriendsGateway {
