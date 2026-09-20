@@ -4,9 +4,10 @@ import { useState } from "react";
 import { BACKEND_URL } from "@/lib/api-config";
 
 type ProfileSetupProps = {
-  userId: string;
+  userId?: string | null;
 
   onComplete: (profile: {
+    userId?: string;
     username: string;
     age: number;
     gender: string;
@@ -107,30 +108,55 @@ export default function ProfileSetup({
 
     // ==========================================
     // USER ID VALIDATION
-    // ==========================================
-
-    if (!userId) {
-      setError(
-        "User session not found. Please refresh the page.",
-      );
-      return;
-    }
-
     setSaving(true);
 
     try {
       // ==========================================
-      // SAVE BASIC PROFILE
+      // RESOLVE USER ID AND TOKEN
       // ==========================================
 
-      const token =
+      let effectiveUserId = userId;
+      let token =
         typeof window !== "undefined"
           ? localStorage.getItem("sc_auth_token") ||
             sessionStorage.getItem("sc_session_token") ||
             localStorage.getItem("sc_session_token")
           : null;
+
+      if (!effectiveUserId) {
+        // User just deleted their account or does not yet have a session.
+        // Create an anonymous user session on demand upon profile submission.
+        const sessionRes = await fetch(`${BACKEND_URL}/users/session`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        });
+        if (!sessionRes.ok) {
+          throw new Error("Could not initialize a new user session.");
+        }
+        const sessionData = await sessionRes.json();
+        effectiveUserId = sessionData.userId;
+        token = sessionData.token;
+
+        if (typeof window !== "undefined" && effectiveUserId && token) {
+          localStorage.setItem("sc_auth_token", token);
+          localStorage.setItem("sc_auth_user_id", effectiveUserId);
+          sessionStorage.setItem("sc_session_token", token);
+          sessionStorage.setItem("sc_session_user_id", effectiveUserId);
+        }
+      }
+
+      if (!effectiveUserId) {
+        setError("User session could not be established. Please try again.");
+        setSaving(false);
+        return;
+      }
+
+      // ==========================================
+      // SAVE BASIC PROFILE
+      // ==========================================
+
       const response = await fetch(
-        `${BACKEND_URL}/users/${userId}/profile`,
+        `${BACKEND_URL}/users/${effectiveUserId}/profile`,
         {
           method: "PUT",
 
@@ -197,6 +223,7 @@ export default function ProfileSetup({
       // ==========================================
 
       onComplete({
+        userId: effectiveUserId,
         username:
           data.username,
 

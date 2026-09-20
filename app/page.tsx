@@ -181,6 +181,8 @@ export default function Home() {
   const [profileCompleted, setProfileCompleted] = useState(false);
   const [checkingProfile, setCheckingProfile] = useState(true);
   const [authBootstrapped, setAuthBootstrapped] = useState(false);
+  const [isAccountDeleted, setIsAccountDeleted] = useState(false);
+  const isAccountDeletedRef = useRef(false);
 
   // Global user profile state (single source of truth)
   const [currentUserProfile, setCurrentUserProfile] = useState<UserProfile | null>(null);
@@ -396,6 +398,7 @@ export default function Home() {
     let isCancelled = false;
 
     async function bootstrapSession() {
+      if (isAccountDeletedRef.current) return;
       const { token: storedToken } = getPersistedAuth();
 
       if (storedToken) {
@@ -406,9 +409,11 @@ export default function Home() {
             },
           });
 
+          if (isAccountDeletedRef.current) return;
+
           if (verifyRes.ok) {
             const userProfile = await verifyRes.json();
-            if (userProfile && userProfile.id && !isCancelled) {
+            if (userProfile && userProfile.id && !isCancelled && !isAccountDeletedRef.current) {
               setUserId(userProfile.id);
               userIdRef.current = userProfile.id;
               savePersistedAuth(storedToken, userProfile.id);
@@ -428,7 +433,7 @@ export default function Home() {
           } else if (verifyRes.status === 401 || verifyRes.status === 404) {
             // Token is expired or user was deleted from DB -> clear invalid stored auth
             clearPersistedAuth();
-            if (!isCancelled) {
+            if (!isCancelled && !isAccountDeletedRef.current) {
               setProfileCompleted(false);
               setCurrentView("profile-setup");
             }
@@ -438,7 +443,7 @@ export default function Home() {
         }
       }
 
-      if (!isCancelled) {
+      if (!isCancelled && !isAccountDeletedRef.current) {
         setAuthBootstrapped(true);
       }
     }
@@ -455,7 +460,7 @@ export default function Home() {
   // ==========================================
 
   useEffect(() => {
-    if (!authBootstrapped) return;
+    if (!authBootstrapped || isAccountDeletedRef.current) return;
 
     const { token: currentToken, userId: currentUserId } = getPersistedAuth();
 
@@ -470,6 +475,7 @@ export default function Home() {
       // ==========================================
 
     newSocket.on("user_ready", async (data: UserReadyData & { token?: string }) => {
+      if (isAccountDeletedRef.current) return;
       setUserId(data.userId);
       userIdRef.current = data.userId;
 
@@ -2078,6 +2084,10 @@ export default function Home() {
       // Wipe all user-specific local and session storage
       clearPersistedAuth();
 
+      // Guard all existing and pending async effects
+      isAccountDeletedRef.current = true;
+      setIsAccountDeleted(true);
+
       // Clear all frontend state
       setUserId(null);
       userIdRef.current = null;
@@ -2109,6 +2119,44 @@ export default function Home() {
   };
 
   // ==========================================
+  // RENDER: FIRST-TIME PROFILE SETUP / POST-DELETION
+  // ==========================================
+
+  if (isAccountDeleted || !profileCompleted) {
+    return (
+      <main className="min-h-screen relative flex items-center justify-center p-4 bg-[#030308] overflow-hidden">
+        <GalaxyBackground />
+        <div className="relative z-10 w-full flex justify-center">
+          <ProfileSetup
+            userId={userId}
+            onComplete={(savedProfile) => {
+              const assignedUserId = savedProfile.userId || userId;
+              if (assignedUserId) {
+                setUserId(assignedUserId);
+                userIdRef.current = assignedUserId;
+              }
+              isAccountDeletedRef.current = false;
+              setIsAccountDeleted(false);
+              setCurrentUserProfile((prev) => ({
+                id: assignedUserId || prev?.id || "",
+                username: savedProfile.username,
+                age: savedProfile.age,
+                gender: savedProfile.gender,
+                avatar: savedProfile.avatar,
+                language: prev?.language || language,
+                interests: prev?.interests || interests,
+                goal: prev?.goal || goal,
+              }));
+              setProfileCompleted(true);
+              navigateTo("matching");
+            }}
+          />
+        </div>
+      </main>
+    );
+  }
+
+  // ==========================================
   // RENDER: LOADING CONNECTION
   // ==========================================
 
@@ -2124,37 +2172,6 @@ export default function Home() {
           <div className="mt-6">
             <div className="animate-spin h-7 w-7 border-2 border-indigo-500/30 border-t-indigo-500 rounded-full mx-auto" />
           </div>
-        </div>
-      </main>
-    );
-  }
-
-  // ==========================================
-  // RENDER: FIRST-TIME PROFILE SETUP
-  // ==========================================
-
-  if (!profileCompleted) {
-    return (
-      <main className="min-h-screen relative flex items-center justify-center p-4 bg-[#030308] overflow-hidden">
-        <GalaxyBackground />
-        <div className="relative z-10 w-full flex justify-center">
-          <ProfileSetup
-            userId={userId}
-            onComplete={(savedProfile) => {
-              setCurrentUserProfile((prev) => ({
-                id: userId,
-                username: savedProfile.username,
-                age: savedProfile.age,
-                gender: savedProfile.gender,
-                avatar: savedProfile.avatar,
-                language: prev?.language || language,
-                interests: prev?.interests || interests,
-                goal: prev?.goal || goal,
-              }));
-              setProfileCompleted(true);
-              navigateTo("matching");
-            }}
-          />
         </div>
       </main>
     );
