@@ -18,6 +18,7 @@ type AppSidebarProps = {
   pendingRequestsCount?: number;
   searchQuery: string;
   onSearchQueryChange: (q: string) => void;
+  onLogout?: () => void;
   onDeleteAccount?: () => void;
 };
 
@@ -33,6 +34,7 @@ export default function AppSidebar({
   pendingRequestsCount = 0,
   searchQuery,
   onSearchQueryChange,
+  onLogout,
   onDeleteAccount,
 }: AppSidebarProps) {
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -391,14 +393,25 @@ export default function AppSidebar({
                   </button>
                 </div>
 
-                {/* Destructive Account Action */}
-                <div className="pt-2 pb-4 border-t border-zinc-800">
+                {/* Account Actions */}
+                <div className="pt-2 pb-3 border-t border-zinc-800 space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowSettingsModal(false);
+                      onLogout?.();
+                    }}
+                    className="w-full py-2.5 px-3 rounded-xl bg-zinc-800 hover:bg-zinc-700/80 border border-zinc-700/60 text-xs font-semibold text-zinc-200 hover:text-white flex items-center justify-center gap-2 transition"
+                  >
+                    <span>🚪</span> Log Out (Switch User / Device)
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => setShowConfirmDelete(true)}
                     className="w-full py-2.5 px-3 rounded-xl bg-red-950/40 hover:bg-red-900/60 border border-red-800/50 text-xs font-semibold text-red-400 hover:text-red-300 flex items-center justify-center gap-2 transition"
                   >
-                    <span>🗑️</span> Logout / Delete Account
+                    <span>🗑️</span> Permanently Delete Account
                   </button>
                 </div>
 

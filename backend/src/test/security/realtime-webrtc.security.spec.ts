@@ -281,7 +281,13 @@ describe('Security Test Suite: WebSocket & WebRTC Signaling Security (Phase 5)',
       });
       testUserIds.push(user.id);
 
-      const client = await createClient(user.id);
+      const token = sessionTokenService.signToken(user.id);
+      const client = io(`http://127.0.0.1:${serverPort}`, {
+        transports: ['websocket'],
+        forceNew: true,
+        auth: { userId: user.id, token },
+      });
+
       try {
         const readyPromise = new Promise<{ userId: string; token: string }>((resolve) => {
           client.on('user_ready', (d) => resolve(d));

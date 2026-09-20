@@ -123,7 +123,12 @@ export default function ProfileSetup({
       // SAVE BASIC PROFILE
       // ==========================================
 
-      const token = typeof window !== "undefined" ? sessionStorage.getItem("sc_session_token") : null;
+      const token =
+        typeof window !== "undefined"
+          ? localStorage.getItem("sc_auth_token") ||
+            sessionStorage.getItem("sc_session_token") ||
+            localStorage.getItem("sc_session_token")
+          : null;
       const response = await fetch(
         `${BACKEND_URL}/users/${userId}/profile`,
         {

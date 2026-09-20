@@ -122,6 +122,51 @@ function formatLastSeen(timestamp: string): string {
   }
 }
 
+function getPersistedAuth(): { token: string | null; userId: string | null } {
+  if (typeof window === "undefined") return { token: null, userId: null };
+  const token =
+    localStorage.getItem("sc_auth_token") ||
+    sessionStorage.getItem("sc_session_token") ||
+    localStorage.getItem("sc_session_token");
+  const userId =
+    localStorage.getItem("sc_auth_user_id") ||
+    localStorage.getItem("sc_last_user_id") ||
+    sessionStorage.getItem("sc_user_id") ||
+    sessionStorage.getItem("sc_session_user_id");
+  return { token, userId };
+}
+
+function savePersistedAuth(token: string, userId: string) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem("sc_auth_token", token);
+    localStorage.setItem("sc_auth_user_id", userId);
+    localStorage.setItem("sc_last_user_id", userId);
+    sessionStorage.setItem("sc_session_token", token);
+    sessionStorage.setItem("sc_session_user_id", userId);
+    sessionStorage.setItem("sc_user_id", userId);
+  } catch (err) {
+    console.warn("Could not save persisted auth:", err);
+  }
+}
+
+function clearPersistedAuth() {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem("sc_auth_token");
+    localStorage.removeItem("sc_auth_user_id");
+    localStorage.removeItem("sc_last_user_id");
+    localStorage.removeItem("sc_session_token");
+    localStorage.removeItem("sc_user_id");
+    localStorage.removeItem("sc_session_user_id");
+    sessionStorage.removeItem("sc_session_token");
+    sessionStorage.removeItem("sc_session_user_id");
+    sessionStorage.removeItem("sc_user_id");
+  } catch (err) {
+    console.warn("Could not clear persisted auth:", err);
+  }
+}
+
 export default function Home() {
   // ==========================================
   // CORE STATE
@@ -135,6 +180,7 @@ export default function Home() {
   const [currentView, setCurrentView] = useState<AppView>("profile-setup");
   const [profileCompleted, setProfileCompleted] = useState(false);
   const [checkingProfile, setCheckingProfile] = useState(true);
+  const [authBootstrapped, setAuthBootstrapped] = useState(false);
 
   // Global user profile state (single source of truth)
   const [currentUserProfile, setCurrentUserProfile] = useState<UserProfile | null>(null);
@@ -343,89 +389,148 @@ export default function Home() {
   }, [currentView, socket, friendRoomId]);
 
   // ==========================================
+  // SESSION BOOTSTRAP (VERIFY PERSISTED AUTH)
+  // ==========================================
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    async function bootstrapSession() {
+      const { token: storedToken } = getPersistedAuth();
+
+      if (storedToken) {
+        try {
+          const verifyRes = await fetch(`${BACKEND_URL}/users/me`, {
+            headers: {
+              Authorization: `Bearer ${storedToken}`,
+            },
+          });
+
+          if (verifyRes.ok) {
+            const userProfile = await verifyRes.json();
+            if (userProfile && userProfile.id && !isCancelled) {
+              setUserId(userProfile.id);
+              userIdRef.current = userProfile.id;
+              savePersistedAuth(storedToken, userProfile.id);
+
+              if (userProfile.username) {
+                setCurrentUserProfile(userProfile);
+                setProfileCompleted(true);
+                setCurrentView("matching");
+                if (userProfile.language) setLanguage(userProfile.language);
+                if (userProfile.interests && Array.isArray(userProfile.interests)) setInterests(userProfile.interests);
+                if (userProfile.goal) setGoal(userProfile.goal);
+              } else {
+                setProfileCompleted(false);
+                setCurrentView("profile-setup");
+              }
+            }
+          } else if (verifyRes.status === 401 || verifyRes.status === 404) {
+            // Token is expired or user was deleted from DB -> clear invalid stored auth
+            clearPersistedAuth();
+            if (!isCancelled) {
+              setProfileCompleted(false);
+              setCurrentView("profile-setup");
+            }
+          }
+        } catch (err) {
+          console.warn("Session verification warning:", err);
+        }
+      }
+
+      if (!isCancelled) {
+        setAuthBootstrapped(true);
+      }
+    }
+
+    bootstrapSession();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [sessionKey]);
+
+  // ==========================================
   // SOCKET INITIALIZATION & LIFECYCLE
   // ==========================================
 
   useEffect(() => {
-    // Use sessionStorage per tab so multiple tabs have distinct identities for testing/chatting,
-    // while falling back to localStorage if available.
-    let savedUserId: string | null = null;
-    if (typeof window !== "undefined") {
-      savedUserId = sessionStorage.getItem("sc_user_id");
-      if (!savedUserId) {
-        // If there's a stored ID in localStorage, only borrow it if not already in use in another tab,
-        // or generate fresh per-tab session
-        savedUserId = sessionStorage.getItem("sc_session_user_id");
-      }
-    }
+    if (!authBootstrapped) return;
 
-    const savedToken = typeof window !== "undefined" ? sessionStorage.getItem("sc_session_token") : null;
+    const { token: currentToken, userId: currentUserId } = getPersistedAuth();
 
     const newSocket = io(BACKEND_URL, {
-      auth: { userId: savedUserId, token: savedToken },
+      auth: { userId: currentUserId, token: currentToken },
     });
 
     setSocket(newSocket);
 
-    // ==========================================
-    // USER READY & SESSION
-    // ==========================================
+      // ==========================================
+      // USER READY & SESSION
+      // ==========================================
 
     newSocket.on("user_ready", async (data: UserReadyData & { token?: string }) => {
       setUserId(data.userId);
       userIdRef.current = data.userId;
-      if (typeof window !== "undefined") {
-        localStorage.setItem("sc_last_user_id", data.userId);
-        sessionStorage.setItem("sc_session_user_id", data.userId);
-        if (data.token) {
-          sessionStorage.setItem("sc_session_token", data.token);
-        }
+
+      if (data.token) {
+        savePersistedAuth(data.token, data.userId);
+      } else if (currentToken) {
+        savePersistedAuth(currentToken, data.userId);
       }
+
       newSocket.emit("friend_online", { userId: data.userId });
 
-      // Load persistent notifications for user
-      try {
-        const [resNotifs, resCount] = await Promise.all([
-          fetch(`${BACKEND_URL}/notifications/${data.userId}`),
-          fetch(`${BACKEND_URL}/notifications/${data.userId}/unread-count`),
-        ]);
-        if (resNotifs.ok) {
-          const notifs = await resNotifs.json();
-          setNotifications(notifs);
+        // Load persistent notifications for user
+        try {
+          const [resNotifs, resCount] = await Promise.all([
+            fetch(`${BACKEND_URL}/notifications/${data.userId}`),
+            fetch(`${BACKEND_URL}/notifications/${data.userId}/unread-count`),
+          ]);
+          if (resNotifs.ok) {
+            const notifs = await resNotifs.json();
+            setNotifications(notifs);
+          }
+          if (resCount.ok) {
+            const countData = await resCount.json();
+            setUnreadNotificationsCount(countData.count || 0);
+          }
+        } catch (err) {
+          console.warn("Could not initial load notifications:", err);
         }
-        if (resCount.ok) {
-          const countData = await resCount.json();
-          setUnreadNotificationsCount(countData.count || 0);
-        }
-      } catch (err) {
-        console.warn("Could not initial load notifications:", err);
-      }
 
-      // Check if user already has a completed profile in DB
-      try {
-        const res = await fetch(`${BACKEND_URL}/users/${data.userId}/profile`);
-        if (res.ok) {
-          const profile = await res.json();
-          if (profile && profile.username) {
-            setCurrentUserProfile(profile);
-            setProfileCompleted(true);
-            setCurrentView("matching");
-            if (profile.language) setLanguage(profile.language);
-            if (profile.interests && Array.isArray(profile.interests)) setInterests(profile.interests);
-            if (profile.goal) setGoal(profile.goal);
+        // Check if user already has a completed profile in DB
+        try {
+          const res = await fetch(`${BACKEND_URL}/users/${data.userId}/profile`);
+          if (res.ok) {
+            const profile = await res.json();
+            if (profile && profile.username) {
+              setCurrentUserProfile(profile);
+              setProfileCompleted(true);
+              setCurrentView("matching");
+              if (profile.language) setLanguage(profile.language);
+              if (profile.interests && Array.isArray(profile.interests)) setInterests(profile.interests);
+              if (profile.goal) setGoal(profile.goal);
+            } else {
+              setProfileCompleted(false);
+            }
           } else {
             setProfileCompleted(false);
           }
-        } else {
+        } catch (e) {
+          console.warn("Could not check existing profile:", e);
           setProfileCompleted(false);
+        } finally {
+          setCheckingProfile(false);
         }
-      } catch (e) {
-        console.warn("Could not check existing profile:", e);
-        setProfileCompleted(false);
-      } finally {
+      });
+
+      // Handle socket-level auth error (e.g., token rejected by gateway)
+      newSocket.on("auth_error", () => {
+        console.warn("Socket auth rejected, resetting credentials");
+        clearPersistedAuth();
         setCheckingProfile(false);
-      }
-    });
+      });
 
     // ==========================================
     // STRANGER MATCHING
@@ -1050,7 +1155,7 @@ export default function Home() {
     return () => {
       newSocket.disconnect();
     };
-  }, [navigateTo, showNotification, sessionKey]);
+  }, [navigateTo, showNotification, sessionKey, authBootstrapped]);
 
   // ==========================================
   // MATCHMAKING & STRANGER CHAT ACTIONS
@@ -1109,7 +1214,7 @@ export default function Home() {
     setMatchingMode("searching");
 
     try {
-      const token = typeof window !== "undefined" ? sessionStorage.getItem("sc_session_token") : null;
+      const { token } = getPersistedAuth();
       const prefRes = await fetch(`${BACKEND_URL}/users/${userId}/preferences`, {
         method: "PUT",
         headers: {
@@ -1170,7 +1275,7 @@ export default function Home() {
     if (!userId) return;
     setSavingPreferences(true);
     try {
-      const token = typeof window !== "undefined" ? sessionStorage.getItem("sc_session_token") : null;
+      const { token } = getPersistedAuth();
       const res = await fetch(`${BACKEND_URL}/users/${userId}/preferences`, {
         method: "PUT",
         headers: {
@@ -1943,6 +2048,51 @@ export default function Home() {
   // ACCOUNT DELETION & LOGOUT
   // ==========================================
 
+  const handleLogout = () => {
+    videoCall.teardownCall();
+    friendVideoCall.teardownCall();
+    setIsVideoChatOpen(false);
+    setIsFriendVideoChatOpen(false);
+    setUnreadVideoChatCount(0);
+    setUnreadFriendVideoChatCount(0);
+
+    // Disconnect socket
+    if (socket) {
+      socket.disconnect();
+    }
+
+    // Wipe persistent and session auth
+    clearPersistedAuth();
+
+    // Clear all frontend state
+    setUserId(null);
+    userIdRef.current = null;
+    setCurrentUserProfile(null);
+    setFriends([]);
+    setFriendRequests([]);
+    setNotifications([]);
+    setUnreadNotificationsCount(0);
+    setMessages([]);
+    setFriendMessages([]);
+    setSelectedFriend(null);
+    setFriendRoomId(null);
+    setFriendChatId(null);
+    setStrangerRoomId(null);
+    setStrangerUserId(null);
+    setMatchScore(null);
+    setStrangerStatus("connecting");
+    setWaiting(false);
+    setProfileCompleted(false);
+    setCheckingProfile(false);
+    setCurrentView("profile-setup");
+    setIsSidebarOpen(false);
+
+    // Trigger fresh socket connection for new anonymous user identity
+    setSessionKey((prev) => prev + 1);
+
+    showNotification("Logged out successfully.");
+  };
+
   const handleDeleteAccount = async () => {
     if (!userId) return;
     try {
@@ -1952,7 +2102,7 @@ export default function Home() {
       setIsFriendVideoChatOpen(false);
       setUnreadVideoChatCount(0);
       setUnreadFriendVideoChatCount(0);
-      const token = typeof window !== "undefined" ? sessionStorage.getItem("sc_session_token") : null;
+      const { token } = getPersistedAuth();
       const res = await fetch(`${BACKEND_URL}/users/${userId}/account`, {
         method: "DELETE",
         headers: {
@@ -1970,13 +2120,7 @@ export default function Home() {
       }
 
       // Wipe all user-specific local and session storage
-      if (typeof window !== "undefined") {
-        sessionStorage.removeItem("sc_user_id");
-        sessionStorage.removeItem("sc_session_user_id");
-        sessionStorage.removeItem("sc_session_token");
-        localStorage.removeItem("sc_user_id");
-        localStorage.removeItem("sc_session_user_id");
-      }
+      clearPersistedAuth();
 
       // Clear all frontend state
       setUserId(null);
@@ -2240,6 +2384,7 @@ export default function Home() {
           pendingRequestsCount={friendRequests.length}
           searchQuery={searchQuery}
           onSearchQueryChange={setSearchQuery}
+          onLogout={handleLogout}
           onDeleteAccount={handleDeleteAccount}
         />
 

@@ -83,7 +83,12 @@ export default function EditProfileModal({
     setSaving(true);
 
     try {
-      const token = typeof window !== "undefined" ? sessionStorage.getItem("sc_session_token") : null;
+      const token =
+        typeof window !== "undefined"
+          ? localStorage.getItem("sc_auth_token") ||
+            sessionStorage.getItem("sc_session_token") ||
+            localStorage.getItem("sc_session_token")
+          : null;
       const response = await fetch(
         `${BACKEND_URL}/users/${user.id}/profile`,
         {

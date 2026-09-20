@@ -40,7 +40,13 @@ describe('UsersController (API)', () => {
       ],
     })
       .overrideGuard(SessionAuthGuard)
-      .useValue({ canActivate: () => true })
+      .useValue({
+        canActivate: (context: any) => {
+          const req = context.switchToHttp().getRequest();
+          req.user = { userId: 'usr_me_123' };
+          return true;
+        },
+      })
       .compile();
 
     app = moduleFixture.createNestApplication();
@@ -281,6 +287,46 @@ describe('UsersController (API)', () => {
 
       const res = await request(app.getHttpServer())
         .get('/users/usr_missing/profile')
+        .expect(404);
+
+      expect(res.body.message).toBe('User not found');
+    });
+  });
+
+  // ==========================================
+  // GET /users/me
+  // ==========================================
+  describe('GET /users/me', () => {
+    it('should return 200 and the user profile for authenticated user', async () => {
+      const mockProfile = {
+        id: 'usr_me_123',
+        username: 'chirp_persisted_user',
+        age: 26,
+        gender: 'female',
+        avatar: 'https://chirp.app/avatar2.png',
+        interests: ['movies', 'travel'],
+        language: 'English',
+        goal: 'Networking',
+      };
+      mockUsersService.getProfile.mockResolvedValue(mockProfile);
+
+      // In the mock guard, we can pass request.user via middleware or simulate
+      const res = await request(app.getHttpServer())
+        .get('/users/me')
+        .set('Authorization', 'Bearer mock_valid_token')
+        .expect(200);
+
+      expect(res.body).toEqual(mockProfile);
+    });
+
+    it('should return 404 if user no longer exists in database', async () => {
+      mockUsersService.getProfile.mockRejectedValue(
+        new NotFoundException('User not found'),
+      );
+
+      const res = await request(app.getHttpServer())
+        .get('/users/me')
+        .set('Authorization', 'Bearer mock_valid_token')
         .expect(404);
 
       expect(res.body.message).toBe('User not found');

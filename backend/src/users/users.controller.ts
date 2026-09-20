@@ -7,8 +7,10 @@ import {
   Param,
   Post,
   Put,
+  Req,
   UseGuards,
 } from '@nestjs/common';
+import type { Request } from 'express';
 
 import { CreateProfileDto } from './dto/create-profile.dto.js';
 import { UpdatePreferencesDto } from './dto/update-preferences.dto.js';
@@ -73,6 +75,20 @@ export class UsersController {
       userId,
       dto,
     );
+  }
+
+  // ==========================================
+  // GET CURRENT AUTHENTICATED USER (ME)
+  // ==========================================
+
+  @Get('me')
+  @UseGuards(SessionAuthGuard)
+  async getCurrentUser(@Req() req: Request & { user?: { userId: string } }) {
+    const userId = req.user?.userId;
+    if (!userId) {
+      throw new NotFoundException('Authenticated user not found');
+    }
+    return this.usersService.getProfile(userId);
   }
 
   // ==========================================
