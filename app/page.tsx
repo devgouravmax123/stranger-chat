@@ -397,9 +397,11 @@ export default function Home() {
 
   useEffect(() => {
     let isCancelled = false;
+    let timerId: NodeJS.Timeout | null = null;
 
     async function bootstrapSession() {
       if (isAccountDeletedRef.current) return;
+      const startTime = Date.now();
       const { token: storedToken } = getPersistedAuth();
 
       if (storedToken) {
@@ -444,8 +446,25 @@ export default function Home() {
         }
       }
 
-      if (!isCancelled && !isAccountDeletedRef.current) {
-        setAuthBootstrapped(true);
+      const completeBootstrap = () => {
+        if (!isCancelled && !isAccountDeletedRef.current) {
+          setAuthBootstrapped(true);
+        }
+      };
+
+      // For fresh visitors (no stored token), ensure the branded Chirp loading screen
+      // displays for a minimum of ~1.8 seconds before transitioning to Profile Setup.
+      // If returning user with valid token, transition immediately when ready.
+      if (!storedToken) {
+        const elapsed = Date.now() - startTime;
+        const remainingDelay = Math.max(0, 1800 - elapsed);
+        if (remainingDelay > 0) {
+          timerId = setTimeout(completeBootstrap, remainingDelay);
+        } else {
+          completeBootstrap();
+        }
+      } else {
+        completeBootstrap();
       }
     }
 
@@ -453,6 +472,9 @@ export default function Home() {
 
     return () => {
       isCancelled = true;
+      if (timerId) {
+        clearTimeout(timerId);
+      }
     };
   }, [sessionKey]);
 
