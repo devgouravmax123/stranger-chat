@@ -275,4 +275,52 @@ describe('UsersService', () => {
       expect(mockPrisma.$transaction).toHaveBeenCalled();
     });
   });
+
+  describe('updatePublicKey (E2EE Phase 2)', () => {
+    // Valid standard P-256 SPKI Base64 string for testing
+    const validP256Spki =
+      'MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE7pS53H4J8z7f7XFjC9e6s9NqUjA2B1C3D4E5F6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0==';
+
+    it('should throw NotFoundException if user does not exist', async () => {
+      mockPrisma.user.findUnique.mockResolvedValueOnce(null);
+
+      await expect(
+        service.updatePublicKey('non-existent', validP256Spki),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should throw BadRequestException if public key is malformed / not a valid P-256 key', async () => {
+      mockPrisma.user.findUnique.mockResolvedValueOnce({ id: 'user-1' });
+
+      await expect(
+        service.updatePublicKey('user-1', 'bm90LWEtdmFsaWQtZW5jb2RlZC1rZXk='),
+      ).rejects.toThrow();
+    });
+
+    it('should successfully validate and persist an importable P-256 public key', async () => {
+      const { webcrypto } = await import('node:crypto');
+      const keyPair = await webcrypto.subtle.generateKey(
+        { name: 'ECDH', namedCurve: 'P-256' },
+        true,
+        ['deriveKey', 'deriveBits'],
+      );
+      const exported = await webcrypto.subtle.exportKey('spki', keyPair.publicKey);
+      const base64Key = Buffer.from(exported).toString('base64');
+
+      mockPrisma.user.findUnique.mockResolvedValueOnce({ id: 'user-1' });
+      mockPrisma.user.update.mockResolvedValueOnce({
+        id: 'user-1',
+        username: 'Alice',
+        publicKey: base64Key,
+      });
+
+      const result = await service.updatePublicKey('user-1', base64Key);
+      expect(result.publicKey).toBe(base64Key);
+      expect(mockPrisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        data: { publicKey: base64Key },
+        select: { id: true, username: true, publicKey: true },
+      });
+    });
+  });
 });

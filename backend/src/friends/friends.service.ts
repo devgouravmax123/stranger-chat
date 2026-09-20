@@ -486,6 +486,7 @@ export class FriendsService {
                 gender: true,
                 avatar: true,
                 lastSeenAt: true,
+                publicKey: true,
               },
             },
             userB: {
@@ -496,6 +497,7 @@ export class FriendsService {
                 gender: true,
                 avatar: true,
                 lastSeenAt: true,
+                publicKey: true,
               },
             },
             chat: {

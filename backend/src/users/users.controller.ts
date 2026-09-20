@@ -14,6 +14,7 @@ import type { Request } from 'express';
 
 import { CreateProfileDto } from './dto/create-profile.dto.js';
 import { UpdatePreferencesDto } from './dto/update-preferences.dto.js';
+import { UpdatePublicKeyDto } from './dto/update-public-key.dto.js';
 import { UsersService } from './users.service.js';
 import { SessionAuthGuard } from '../auth/session-auth.guard.js';
 import { SessionTokenService } from '../auth/session-token.service.js';
@@ -89,6 +90,23 @@ export class UsersController {
       throw new NotFoundException('Authenticated user not found');
     }
     return this.usersService.getProfile(userId);
+  }
+
+  // ==========================================
+  // UPDATE CURRENT USER PUBLIC KEY (E2EE IDENTITY)
+  // ==========================================
+
+  @Put('me/public-key')
+  @UseGuards(SessionAuthGuard)
+  async updateMyPublicKey(
+    @Req() req: Request & { user?: { userId: string } },
+    @Body() dto: UpdatePublicKeyDto,
+  ) {
+    const userId = req.user?.userId;
+    if (!userId) {
+      throw new NotFoundException('Authenticated user not found');
+    }
+    return this.usersService.updatePublicKey(userId, dto.publicKey);
   }
 
   // ==========================================

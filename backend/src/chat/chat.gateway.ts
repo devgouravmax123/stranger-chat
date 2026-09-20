@@ -31,6 +31,7 @@ interface UserProfile {
   language: string | null;
   interests: string[];
   goal: string | null;
+  publicKey?: string | null;
 }
 
 interface SendMessageDto {
@@ -2263,6 +2264,7 @@ export class ChatGateway implements OnGatewayInit {
           language: true,
           interests: true,
           goal: true,
+          publicKey: true,
         },
       });
       return user ?? null;

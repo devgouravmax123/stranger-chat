@@ -24,6 +24,7 @@ import { useVideoCall } from "@/hooks/useVideoCall";
 import { blobToDataUrl } from "@/lib/audioConverter";
 import { CANONICAL_INTERESTS, CANONICAL_GOALS } from "@/lib/interests";
 import { BACKEND_URL } from "@/lib/api-config";
+import { clearIdentityKeys, syncIdentityKeyLifecycle } from "@/lib/crypto";
 
 // ==========================================
 // NAVIGATION & VIEW TYPES
@@ -428,6 +429,11 @@ export default function Home() {
                 if (userProfile.language) setLanguage(userProfile.language);
                 if (userProfile.interests && Array.isArray(userProfile.interests)) setInterests(userProfile.interests);
                 if (userProfile.goal) setGoal(userProfile.goal);
+
+                // E2EE Phase 2: Sync identity key lifecycle for returning authenticated user
+                syncIdentityKeyLifecycle(userProfile.publicKey, storedToken, BACKEND_URL).catch((syncErr) => {
+                  console.warn("[E2EE] Bootstrap identity key sync warning:", syncErr);
+                });
               } else {
                 setProfileCompleted(false);
                 setCurrentView("profile-setup");
@@ -2107,6 +2113,9 @@ export default function Home() {
 
       // Wipe all user-specific local and session storage
       clearPersistedAuth();
+
+      // Wipe local E2EE private/public keys from IndexedDB
+      await clearIdentityKeys();
 
       // Guard all existing and pending async effects
       isAccountDeletedRef.current = true;

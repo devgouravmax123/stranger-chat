@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { BACKEND_URL } from "@/lib/api-config";
+import { syncIdentityKeyLifecycle } from "@/lib/crypto";
 
 type ProfileSetupProps = {
   userId?: string | null;
@@ -217,6 +218,17 @@ export default function ProfileSetup({
         "Basic profile saved:",
         data,
       );
+
+      // ==========================================
+      // E2EE PHASE 2: SYNC IDENTITY KEYPAIR & REGISTER PUBLIC KEY
+      // ==========================================
+      if (token) {
+        try {
+          await syncIdentityKeyLifecycle(data.publicKey, token, BACKEND_URL);
+        } catch (e2eeErr) {
+          console.warn("[E2EE] Identity key registration warning:", e2eeErr);
+        }
+      }
 
       // ==========================================
       // MOVE TO PREFERENCES SCREEN

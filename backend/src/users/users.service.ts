@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -249,8 +250,55 @@ export class UsersService implements OnModuleInit {
         language: true,
         interests: true,
         goal: true,
+        publicKey: true,
       },
     });
+  }
+
+  // ==========================================
+  // UPDATE PUBLIC KEY (E2EE IDENTITY KEY)
+  // ==========================================
+
+  async updatePublicKey(userId: string, base64PublicKey: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Cryptographic validation: Verify that base64PublicKey can be imported as a valid ECDH P-256 SPKI key
+    try {
+      const { webcrypto } = await import('node:crypto');
+      const binaryBuf = Buffer.from(base64PublicKey, 'base64');
+      await webcrypto.subtle.importKey(
+        'spki',
+        binaryBuf,
+        {
+          name: 'ECDH',
+          namedCurve: 'P-256',
+        },
+        true,
+        [],
+      );
+    } catch (err: any) {
+      throw new BadRequestException(
+        'Invalid public key: Must be a valid ECDH P-256 SPKI public key',
+      );
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: { publicKey: base64PublicKey },
+      select: {
+        id: true,
+        username: true,
+        publicKey: true,
+      },
+    });
+
+    return updated;
   }
 
   // ==========================================
@@ -275,6 +323,7 @@ export class UsersService implements OnModuleInit {
           language: true,
           interests: true,
           goal: true,
+          publicKey: true,
         },
       });
 
