@@ -21,7 +21,7 @@ export default function AudioPlayer({
   const [isLoaded, setIsLoaded] = useState(false);
   const [hasError, setHasError] = useState(false);
 
-  // Synchronously compute stable Blob URL or direct Data URL on initial render
+  // Use the decrypted blob: URL (or data: URL) directly without creating secondary URLs or prematurely revoking
   const resolvedSrc = useMemo(() => {
     if (!src) return "";
     if (src.startsWith("data:")) {
@@ -33,25 +33,16 @@ export default function AudioPlayer({
     return src;
   }, [src]);
 
-  // Clean up previous blob URL only when resolvedSrc changes or component unmounts
+  // Only revoke secondary blob URLs created internally for legacy data: URLs on unmount
   useEffect(() => {
-    if (resolvedSrc.startsWith("blob:")) {
-      if (prevBlobUrlRef.current && prevBlobUrlRef.current !== resolvedSrc) {
-        try {
-          URL.revokeObjectURL(prevBlobUrlRef.current);
-        } catch {}
-      }
-      prevBlobUrlRef.current = resolvedSrc;
-    }
     return () => {
-      if (prevBlobUrlRef.current) {
+      if (resolvedSrc.startsWith("blob:") && src.startsWith("data:")) {
         try {
-          URL.revokeObjectURL(prevBlobUrlRef.current);
+          URL.revokeObjectURL(resolvedSrc);
         } catch {}
-        prevBlobUrlRef.current = null;
       }
     };
-  }, [resolvedSrc]);
+  }, [resolvedSrc, src]);
 
   useEffect(() => {
     setIsPlaying(false);
@@ -165,15 +156,18 @@ export default function AudioPlayer({
     };
 
     const handleError = () => {
+      const audioErr = audio?.error;
       console.warn("[AudioPlayer] Audio error event received:", {
-        resolvedPrefix: resolvedSrc ? resolvedSrc.slice(0, 40) : "empty",
+        errorCode: audioErr?.code,
+        errorMessage: audioErr?.message,
+        currentSrc: audio?.currentSrc,
+        audioUrl: resolvedSrc,
         rawSrcPrefix: src ? src.slice(0, 40) : "empty",
-        error: audio?.error,
         networkState: audio?.networkState,
         readyState: audio?.readyState,
       });
 
-      // If Blob URL failed to decode, fallback immediately to direct Data URL
+      // If Blob URL failed to decode and src is data URL, fallback
       if (resolvedSrc !== src && src && audio) {
         console.log("[AudioPlayer] Falling back from Blob URL to direct Data URL source");
         audio.src = src;
@@ -188,13 +182,24 @@ export default function AudioPlayer({
       }
     };
 
+    const handleLoadedMetadata = () => {
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[AudioPlayer] loadedmetadata", {
+          currentSrc: audio.currentSrc,
+          duration: audio.duration,
+          readyState: audio.readyState,
+        });
+      }
+      updateDuration();
+    };
+
     audio.addEventListener("play", onPlay);
     audio.addEventListener("playing", onPlaying);
     audio.addEventListener("pause", onPause);
     audio.addEventListener("waiting", onWaiting);
     audio.addEventListener("canplay", onCanPlay);
     audio.addEventListener("canplaythrough", onCanPlayThrough);
-    audio.addEventListener("loadedmetadata", updateDuration);
+    audio.addEventListener("loadedmetadata", handleLoadedMetadata);
     audio.addEventListener("loadeddata", onLoadedData);
     audio.addEventListener("durationchange", updateDuration);
     audio.addEventListener("timeupdate", updateTime);
@@ -209,12 +214,13 @@ export default function AudioPlayer({
       audio.removeEventListener("waiting", onWaiting);
       audio.removeEventListener("canplay", onCanPlay);
       audio.removeEventListener("canplaythrough", onCanPlayThrough);
-      audio.removeEventListener("loadedmetadata", updateDuration);
+      audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
       audio.removeEventListener("loadeddata", onLoadedData);
       audio.removeEventListener("durationchange", updateDuration);
       audio.removeEventListener("timeupdate", updateTime);
       audio.removeEventListener("ended", handleEnded);
       audio.removeEventListener("stalled", onStalled);
+      audio.removeEventListener("error", handleError);
     };
   }, [resolvedSrc]);
 

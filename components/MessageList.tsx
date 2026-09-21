@@ -142,33 +142,47 @@ export default function MessageList({
                     <p className="flex items-center gap-1.5">
                       <span>🚫</span> This message was deleted
                     </p>
-                  ) : message.type === "audio" && message.audioUrl ? (
+                  ) : message.type === "audio" ? (
                     /* AUDIO MESSAGE */
-                    <AudioPlayer src={message.audioUrl} isMe={isMe} />
-                  ) : message.type === "image" && message.imageUrl ? (
-                    /* IMAGE MESSAGE */
-                    <div className="flex flex-col gap-1.5">
-                      <div
-                        onClick={() => setLightboxImage(message.imageUrl || null)}
-                        className="relative max-w-[260px] max-h-[260px] overflow-hidden rounded-xl cursor-pointer group/img shadow-sm"
-                      >
-                        <img
-                          src={message.imageUrl}
-                          alt="Shared photo"
-                          className="h-full w-full object-cover transition transform duration-200 group-hover/img:scale-105"
-                          loading="lazy"
-                        />
-                        <div className="absolute inset-0 bg-black/30 opacity-0 group-hover/img:opacity-100 transition flex items-center justify-center text-white text-xs font-semibold backdrop-blur-2xs">
-                          🔍 Expand
-                        </div>
+                    message.audioUrl ? (
+                      <AudioPlayer src={message.audioUrl} isMe={isMe} />
+                    ) : (
+                      <div className="flex items-center gap-2 rounded-lg bg-black/20 p-2 text-xs text-zinc-300">
+                        <span>🎙️</span>
+                        <span className="italic">{message.text || "Unable to decrypt this voice message"}</span>
                       </div>
+                    )
+                  ) : message.type === "image" ? (
+                    /* IMAGE MESSAGE */
+                    message.imageUrl ? (
+                      <div className="flex flex-col gap-1.5">
+                        <div
+                          onClick={() => setLightboxImage(message.imageUrl || null)}
+                          className="relative max-w-[260px] max-h-[260px] overflow-hidden rounded-xl cursor-pointer group/img shadow-sm"
+                        >
+                          <img
+                            src={message.imageUrl}
+                            alt="Encrypted photo"
+                            className="h-full w-full object-cover transition transform duration-200 group-hover/img:scale-105"
+                            loading="lazy"
+                          />
+                          <div className="absolute inset-0 bg-black/30 opacity-0 group-hover/img:opacity-100 transition flex items-center justify-center text-white text-xs font-semibold backdrop-blur-2xs">
+                            🔍 Expand
+                          </div>
+                        </div>
 
-                      {message.text && message.text !== "Photo message" && (
-                        <p className="px-1 break-words whitespace-pre-wrap text-sm leading-relaxed">
-                          {message.text}
-                        </p>
-                      )}
-                    </div>
+                        {message.text && message.text !== "Photo message" && (
+                          <p className="px-1 break-words whitespace-pre-wrap text-sm leading-relaxed">
+                            {message.text}
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 rounded-lg bg-black/20 p-2 text-xs text-zinc-300">
+                        <span>📷</span>
+                        <span className="italic">{message.text || "Unable to decrypt this photo"}</span>
+                      </div>
+                    )
                   ) : (
                     /* TEXT MESSAGE */
                     <p className="break-words whitespace-pre-wrap text-sm leading-relaxed">

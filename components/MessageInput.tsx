@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import EmojiPicker, { EmojiClickData } from "emoji-picker-react";
 import VoiceRecorder from "./VoiceRecorder";
-import { compressImage } from "@/lib/imageCompressor";
+import { MAX_E2EE_IMAGE_BYTES } from "@/lib/crypto";
 import { Message } from "./MessageList";
 
 type MessageInputProps = {
@@ -11,7 +11,7 @@ type MessageInputProps = {
   setMessage: (message: string) => void;
   sendMessage: () => void;
   onVoiceRecorded?: (audioBlob: Blob) => void;
-  onImageSelected?: (imageDataUrl: string) => void;
+  onImageSelected?: (file: File) => void;
   replyingTo?: Message | null;
   onCancelReply?: () => void;
   onTypingStart?: () => void;
@@ -36,8 +36,9 @@ export default function MessageInput({
   voiceDisabledReason,
 }: MessageInputProps) {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const [attachedImage, setAttachedImage] = useState<string | null>(null);
-  const [isCompressing, setIsCompressing] = useState(false);
+  const [attachedFile, setAttachedFile] = useState<File | null>(null);
+  const [attachedPreviewUrl, setAttachedPreviewUrl] = useState<string | null>(null);
+  const [imageError, setImageError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isTypingRef = useRef(false);
@@ -112,7 +113,7 @@ export default function MessageInput({
   };
 
   // ==========================================
-  // FILE / IMAGE SELECTION
+  // FILE / IMAGE SELECTION & VALIDATION
   // ==========================================
 
   const handlePhotoClick = () => {
@@ -121,26 +122,66 @@ export default function MessageInput({
     }
   };
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setImageError(null);
     const file = e.target.files?.[0];
     if (!file) return;
 
+    // Reset input value so same file can be selected again if needed
+    e.target.value = "";
+
+    // 1. Strict MIME type validation: file.type MUST start with "image/"
+    if (!file.type || !file.type.toLowerCase().startsWith("image/")) {
+      setImageError("Invalid file format. Only image files (JPEG, PNG, WebP, GIF) are allowed.");
+      return;
+    }
+
+    // 2. Strict size check: file MUST NOT exceed MAX_E2EE_IMAGE_BYTES
+    if (file.size > MAX_E2EE_IMAGE_BYTES) {
+      const maxMb = (MAX_E2EE_IMAGE_BYTES / (1024 * 1024)).toFixed(1);
+      const actualMb = (file.size / (1024 * 1024)).toFixed(1);
+      setImageError(`Image is too large (${actualMb} MB). Maximum allowed size is ${maxMb} MB.`);
+      return;
+    }
+
+    // 3. Clean up any previous object URL before creating a new one
+    if (attachedPreviewUrl) {
+      try {
+        URL.revokeObjectURL(attachedPreviewUrl);
+      } catch {}
+    }
+
     try {
-      setIsCompressing(true);
-      const compressedDataUrl = await compressImage(file);
-      setAttachedImage(compressedDataUrl);
+      const localUrl = URL.createObjectURL(file);
+      setAttachedFile(file);
+      setAttachedPreviewUrl(localUrl);
     } catch (err) {
-      console.error("Image compression error:", err);
-      alert("Failed to process image file. Please try another image.");
-    } finally {
-      setIsCompressing(false);
-      e.target.value = "";
+      console.error("[E2EE Photo] Failed to create local preview object URL:", err);
+      setImageError("Failed to prepare image preview. Please try another image.");
     }
   };
 
   const clearAttachedImage = () => {
-    setAttachedImage(null);
+    if (attachedPreviewUrl) {
+      try {
+        URL.revokeObjectURL(attachedPreviewUrl);
+      } catch {}
+    }
+    setAttachedFile(null);
+    setAttachedPreviewUrl(null);
+    setImageError(null);
   };
+
+  // Clean up object URL when component unmounts
+  useEffect(() => {
+    return () => {
+      if (attachedPreviewUrl) {
+        try {
+          URL.revokeObjectURL(attachedPreviewUrl);
+        } catch {}
+      }
+    };
+  }, [attachedPreviewUrl]);
 
   // ==========================================
   // SEND MESSAGE / IMAGE
@@ -152,9 +193,17 @@ export default function MessageInput({
       onTypingStop();
     }
 
-    if (attachedImage && onImageSelected) {
-      onImageSelected(attachedImage);
-      setAttachedImage(null);
+    if (attachedFile && onImageSelected) {
+      onImageSelected(attachedFile);
+      // Revoke the attached preview URL since page will handle optimistic display
+      if (attachedPreviewUrl) {
+        try {
+          URL.revokeObjectURL(attachedPreviewUrl);
+        } catch {}
+      }
+      setAttachedFile(null);
+      setAttachedPreviewUrl(null);
+      setImageError(null);
     }
 
     if (message.trim() !== "") {
@@ -220,14 +269,31 @@ export default function MessageInput({
       )}
 
       {/* ====================================== */}
+      {/* ERROR NOTICE BAR */}
+      {/* ====================================== */}
+
+      {imageError && (
+        <div className="mb-3 flex items-center justify-between gap-2 rounded-xl bg-red-950/80 p-2.5 border border-red-800/80 text-red-200 text-xs animate-fadeIn">
+          <span>⚠️ {imageError}</span>
+          <button
+            type="button"
+            onClick={() => setImageError(null)}
+            className="p-1 text-red-400 hover:text-white"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* ====================================== */}
       {/* ATTACHED IMAGE PREVIEW BAR */}
       {/* ====================================== */}
 
-      {attachedImage && (
+      {attachedPreviewUrl && (
         <div className="mb-3 flex items-center gap-3 rounded-xl bg-zinc-950 p-2.5 border border-zinc-800 animate-fadeIn">
           <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-zinc-700 shadow-sm">
             <img
-              src={attachedImage}
+              src={attachedPreviewUrl}
               alt="Attached preview"
               className="h-full w-full object-cover"
             />
@@ -235,10 +301,10 @@ export default function MessageInput({
 
           <div className="flex-1 min-w-0">
             <p className="text-xs font-semibold text-zinc-200 truncate">
-              Photo Attached
+              {attachedFile?.name || "Photo Attached"}
             </p>
             <p className="text-[11px] text-zinc-400">
-              Ready to send with your message
+              {attachedFile ? `${(attachedFile.size / 1024).toFixed(0)} KB • Encrypted before sending` : "Ready to send"}
             </p>
           </div>
 
@@ -286,16 +352,12 @@ export default function MessageInput({
         <button
           type="button"
           onClick={handlePhotoClick}
-          disabled={disabled || isCompressing}
+          disabled={disabled}
           className="h-11 w-11 shrink-0 rounded-xl bg-zinc-800/90 hover:bg-zinc-700 border border-zinc-700/60 text-xl transition disabled:cursor-not-allowed disabled:opacity-50 flex items-center justify-center text-zinc-200"
           title="Send photo"
           aria-label="Upload photo"
         >
-          {isCompressing ? (
-            <span className="h-4 w-4 animate-spin rounded-full border-2 border-zinc-400 border-t-white" />
-          ) : (
-            "📷"
-          )}
+          📷
         </button>
 
         {/* VOICE */}
@@ -309,14 +371,14 @@ export default function MessageInput({
         <input
           type="text"
           aria-label={
-            attachedImage
+            attachedFile
               ? "Add a caption"
               : replyingTo
               ? "Type your reply"
               : "Type a message"
           }
           placeholder={
-            attachedImage
+            attachedFile
               ? "Add a caption (optional)..."
               : replyingTo
               ? "Type your reply..."
@@ -333,7 +395,7 @@ export default function MessageInput({
         <button
           type="button"
           onClick={handleSend}
-          disabled={disabled || (!attachedImage && message.trim() === "")}
+          disabled={disabled || (!attachedFile && message.trim() === "")}
           className="rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 px-5 py-3 font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-40 shrink-0 text-sm shadow-sm active:scale-95"
         >
           Send

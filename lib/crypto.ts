@@ -929,3 +929,305 @@ export async function decryptTextMessage(
   );
 }
 
+// ==========================================
+// PHASE 4 STEP 1: E2EE MEDIA CRYPTO LAYER
+// ==========================================
+
+export type E2EEMediaType = "image" | "audio";
+
+export type E2EEMediaEnvelope = {
+  e2ee: true;
+  v: 1;
+  type: E2EEMediaType;
+  mime: string;
+  iv: string;
+  ct: string;
+};
+
+/**
+ * Maximum image size in bytes allowed for client-side E2EE photo encryption (5.5 MB).
+ * Kept safely below backend's 8 MB Base64 ciphertext limit (MAX_MEDIA_CIPHERTEXT_SIZE),
+ * accounting for AES-GCM tag (16 bytes) and Base64 expansion (4/3 factor: 5.5MB * 1.333 ≈ 7.33MB < 8MB).
+ */
+export const MAX_E2EE_IMAGE_BYTES = 5.5 * 1024 * 1024; // 5.5 MB (5,767,168 bytes)
+
+/**
+ * Maximum audio size in bytes allowed for client-side E2EE voice recording encryption (5.5 MB).
+ * Safely conforms to the backend's 8 MB Base64 ciphertext limit (MAX_MEDIA_CIPHERTEXT_SIZE).
+ */
+export const MAX_E2EE_AUDIO_BYTES = 5.5 * 1024 * 1024; // 5.5 MB (5,767,168 bytes)
+
+/**
+ * Maximum recording duration in seconds for voice notes (120 seconds = 2 minutes).
+ */
+export const MAX_VOICE_DURATION_SECONDS = 120; // 2 minutes
+
+/**
+ * Validates whether an unknown value conforms to the versioned E2EEMediaEnvelope specification.
+ *
+ * Requirements:
+ * - e2ee === true
+ * - v === 1
+ * - type === "image" OR type === "audio"
+ * - mime is a non-empty string starting with "image/" or "audio/"
+ * - iv is valid Base64 and decodes to exactly 12 bytes
+ * - ct is valid Base64 and is non-empty
+ */
+export function isE2EEMediaEnvelope(value: unknown): value is E2EEMediaEnvelope {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+
+  if (candidate.e2ee !== true || candidate.v !== 1) {
+    return false;
+  }
+
+  if (candidate.type !== "image" && candidate.type !== "audio") {
+    return false;
+  }
+
+  if (
+    typeof candidate.mime !== "string" ||
+    candidate.mime.trim().length === 0 ||
+    (!candidate.mime.startsWith("image/") && !candidate.mime.startsWith("audio/"))
+  ) {
+    return false;
+  }
+
+  if (typeof candidate.iv !== "string" || typeof candidate.ct !== "string") {
+    return false;
+  }
+
+  if (candidate.ct.length === 0) {
+    return false;
+  }
+
+  // Validate Base64 formatting
+  const base64Regex = /^[A-Za-z0-9+/]+={0,2}$/;
+  if (!base64Regex.test(candidate.iv) || !base64Regex.test(candidate.ct)) {
+    return false;
+  }
+
+  try {
+    const ivBytes = new Uint8Array(base64ToArrayBuffer(candidate.iv));
+    if (ivBytes.byteLength !== 12) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+
+  try {
+    const ctBytes = new Uint8Array(base64ToArrayBuffer(candidate.ct));
+    if (ctBytes.byteLength === 0) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Serializes a validated E2EEMediaEnvelope into a deterministic JSON string.
+ */
+export function packE2EEMedia(envelope: E2EEMediaEnvelope): string {
+  if (!isE2EEMediaEnvelope(envelope)) {
+    throw new Error("[E2EE] Invalid media envelope cannot be packed.");
+  }
+  return JSON.stringify({
+    e2ee: envelope.e2ee,
+    v: envelope.v,
+    type: envelope.type,
+    mime: envelope.mime,
+    iv: envelope.iv,
+    ct: envelope.ct,
+  });
+}
+
+/**
+ * Deserializes and strictly validates a raw JSON string or unknown object into an E2EEMediaEnvelope.
+ * Returns null on any validation failure or parsing error.
+ */
+export function unpackE2EEMedia(value: string | unknown): E2EEMediaEnvelope | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (typeof value === "string") {
+    if (!value.trim().startsWith("{")) {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(value);
+      if (isE2EEMediaEnvelope(parsed)) {
+        return parsed;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  if (typeof value === "object") {
+    if (isE2EEMediaEnvelope(value)) {
+      return value;
+    }
+    return null;
+  }
+
+  return null;
+}
+
+/**
+ * Constructs media-specific AAD (Additional Authenticated Data).
+ *
+ * Format: "chirp:e2ee:v1:media:<chatId>:<senderId>:<type>:<mime>"
+ * Example: "chirp:e2ee:v1:media:chat123:user456:image:image/jpeg"
+ */
+export function buildMediaAAD(
+  chatId: string,
+  senderId: string,
+  type: E2EEMediaType,
+  mime: string
+): string {
+  return `chirp:e2ee:v1:media:${chatId}:${senderId}:${type}:${mime}`;
+}
+
+/**
+ * Encrypts a raw media Blob using AES-256-GCM with a fresh 12-byte IV,
+ * bound cryptographically to chatId, senderId, type, and mime via AAD.
+ *
+ * Returns an E2EEMediaEnvelope. Plaintext bytes are never stored in the envelope.
+ */
+export async function encryptMediaBlob(
+  blob: Blob,
+  chatId: string,
+  senderId: string,
+  peerPublicKey: string,
+  type: E2EEMediaType
+): Promise<E2EEMediaEnvelope> {
+  if (!blob || typeof blob.arrayBuffer !== "function") {
+    throw new Error("[E2EE] Invalid blob provided for media encryption.");
+  }
+  if (!chatId || typeof chatId !== "string") {
+    throw new Error("[E2EE] Invalid chatId provided for media encryption.");
+  }
+  if (!senderId || typeof senderId !== "string") {
+    throw new Error("[E2EE] Invalid senderId provided for media encryption.");
+  }
+  if (!peerPublicKey || typeof peerPublicKey !== "string") {
+    throw new Error("[E2EE] Invalid peerPublicKey provided for media encryption.");
+  }
+  if (type !== "image" && type !== "audio") {
+    throw new Error(`[E2EE] Unsupported media type: ${type}`);
+  }
+
+  const mime = blob.type;
+  if (
+    !mime ||
+    typeof mime !== "string" ||
+    (!mime.startsWith("image/") && !mime.startsWith("audio/"))
+  ) {
+    throw new Error(
+      `[E2EE] Invalid or unsupported media MIME type on blob: "${mime}". Must start with "image/" or "audio/".`
+    );
+  }
+
+  // 1. Obtain conversation shared AES key
+  const conversationKey = await getConversationSharedKey(chatId, peerPublicKey);
+
+  // 2. Read raw media bytes
+  const rawBytes = await blob.arrayBuffer();
+
+  // 3. Generate fresh random 12-byte IV for every encryption
+  const iv = getRandomBytes(12);
+
+  // 4. Construct media-specific AAD
+  const aad = buildMediaAAD(chatId, senderId, type, mime);
+  const encoder = new TextEncoder();
+
+  const gcmParams: AesGcmParams = {
+    name: "AES-GCM",
+    iv: iv as unknown as BufferSource,
+    additionalData: encoder.encode(aad),
+  };
+
+  // 5. Encrypt with AES-256-GCM
+  const subtle = getSubtleCrypto();
+  const ciphertextBuffer = await subtle.encrypt(gcmParams, conversationKey, rawBytes);
+
+  // 6. Construct and validate envelope
+  const envelope: E2EEMediaEnvelope = {
+    e2ee: true,
+    v: 1,
+    type,
+    mime,
+    iv: arrayBufferToBase64(iv),
+    ct: arrayBufferToBase64(ciphertextBuffer),
+  };
+
+  if (!isE2EEMediaEnvelope(envelope)) {
+    throw new Error("[E2EE] Internal error: Generated media envelope failed validation.");
+  }
+
+  return envelope;
+}
+
+/**
+ * Decrypts an E2EEMediaEnvelope using the derived conversation key,
+ * verifying that the ciphertext, IV, chatId, senderId, type, and MIME match exactly.
+ *
+ * Returns a Blob containing decrypted plaintext bytes with envelope.mime type.
+ */
+export async function decryptMediaEnvelope(
+  envelope: E2EEMediaEnvelope,
+  chatId: string,
+  senderId: string,
+  peerPublicKey: string
+): Promise<Blob> {
+  // 1. Validate envelope
+  if (!isE2EEMediaEnvelope(envelope)) {
+    throw new Error("[E2EE] Malformed or invalid E2EE media envelope.");
+  }
+  if (!chatId || typeof chatId !== "string") {
+    throw new Error("[E2EE] Invalid chatId provided for media decryption.");
+  }
+  if (!senderId || typeof senderId !== "string") {
+    throw new Error("[E2EE] Invalid senderId provided for media decryption.");
+  }
+  if (!peerPublicKey || typeof peerPublicKey !== "string") {
+    throw new Error("[E2EE] Invalid peerPublicKey provided for media decryption.");
+  }
+
+  // 2. Obtain conversation shared AES key
+  const conversationKey = await getConversationSharedKey(chatId, peerPublicKey);
+
+  // 3. Decode IV and ciphertext
+  const iv = new Uint8Array(base64ToArrayBuffer(envelope.iv));
+  const ciphertext = base64ToArrayBuffer(envelope.ct);
+
+  // 4. Construct media-specific AAD
+  const aad = buildMediaAAD(chatId, senderId, envelope.type, envelope.mime);
+  const encoder = new TextEncoder();
+
+  const gcmParams: AesGcmParams = {
+    name: "AES-GCM",
+    iv: iv as unknown as BufferSource,
+    additionalData: encoder.encode(aad),
+  };
+
+  // 5. AES-256-GCM decrypt (throws OperationError if auth fails or data tampered)
+  const subtle = getSubtleCrypto();
+  const decryptedBuffer = await subtle.decrypt(gcmParams, conversationKey, ciphertext);
+
+  // 6. Return reconstituted Blob with original MIME
+  return new Blob([decryptedBuffer], {
+    type: envelope.mime,
+  });
+}
+
+

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
+import { MAX_E2EE_AUDIO_BYTES, MAX_VOICE_DURATION_SECONDS } from "@/lib/crypto";
 
 type VoiceRecorderProps = {
   onRecorded: (audioBlob: Blob) => void;
@@ -148,6 +149,14 @@ export default function VoiceRecorder({
         const finalSecs = durationRef.current;
         cleanupHardware();
 
+        if (blob.size > MAX_E2EE_AUDIO_BYTES) {
+          chunksRef.current = [];
+          setRecording(false);
+          const maxMb = (MAX_E2EE_AUDIO_BYTES / (1024 * 1024)).toFixed(1);
+          alert(`Voice note is too large. Maximum allowed size is ${maxMb} MB.`);
+          return;
+        }
+
         if (blob.size > 200) {
           setRecordedBlob(blob);
           setRecordedDuration(finalSecs);
@@ -177,7 +186,16 @@ export default function VoiceRecorder({
       setRecording(true);
 
       timerRef.current = setInterval(() => {
-        setDuration((prev) => prev + 1);
+        setDuration((prev) => {
+          const next = prev + 1;
+          if (next >= MAX_VOICE_DURATION_SECONDS) {
+            // Auto-stop at max duration
+            setTimeout(() => {
+              stopAndPreview();
+            }, 0);
+          }
+          return next;
+        });
       }, 1000);
     } catch (err: any) {
       console.error("[VoiceRecorder] Microphone access error:", err);

@@ -466,5 +466,418 @@ describe('ChatGateway - Phase 3 Step 2 Backend E2EE Transport & Storage', () => 
       expect(decryptMethods).toEqual([]);
     });
   });
+
+  describe('Phase 4.2 - Encrypted Media Transport & Validation', () => {
+    const validImageEnvelope = {
+      e2ee: true as const,
+      v: 1 as const,
+      type: 'image' as const,
+      mime: 'image/jpeg',
+      iv: 'MTIzNDU2Nzg5MDEy', // 12-byte base64
+      ct: 'ZXhhbXBsZS1pbWFnZS1jaXBoZXJ0ZXh0',
+    };
+
+    const validAudioEnvelope = {
+      e2ee: true as const,
+      v: 1 as const,
+      type: 'audio' as const,
+      mime: 'audio/webm',
+      iv: 'MTIzNDU2Nzg5MDEy', // 12-byte base64
+      ct: 'ZXhhbXBsZS1hdWRpby1jaXBoZXJ0ZXh0',
+    };
+
+    describe('Media envelope validation (isValidE2EEMediaEnvelope)', () => {
+      it('A. Valid image envelope accepted', async () => {
+        const { isValidE2EEMediaEnvelope } = await import('./dto/e2ee-envelope.dto.js');
+        expect(isValidE2EEMediaEnvelope(validImageEnvelope)).toBe(true);
+      });
+
+      it('B. Valid audio envelope accepted', async () => {
+        const { isValidE2EEMediaEnvelope } = await import('./dto/e2ee-envelope.dto.js');
+        expect(isValidE2EEMediaEnvelope(validAudioEnvelope)).toBe(true);
+      });
+
+      it('C. Invalid version rejected', async () => {
+        const { isValidE2EEMediaEnvelope } = await import('./dto/e2ee-envelope.dto.js');
+        expect(isValidE2EEMediaEnvelope({ ...validImageEnvelope, v: 2 as any })).toBe(false);
+      });
+
+      it('D. Invalid media type rejected', async () => {
+        const { isValidE2EEMediaEnvelope } = await import('./dto/e2ee-envelope.dto.js');
+        expect(isValidE2EEMediaEnvelope({ ...validImageEnvelope, type: 'video' as any })).toBe(false);
+      });
+
+      it('E. Invalid MIME rejected', async () => {
+        const { isValidE2EEMediaEnvelope } = await import('./dto/e2ee-envelope.dto.js');
+        expect(isValidE2EEMediaEnvelope({ ...validImageEnvelope, mime: 'text/html' })).toBe(false);
+        expect(isValidE2EEMediaEnvelope({ ...validImageEnvelope, mime: '' })).toBe(false);
+        expect(isValidE2EEMediaEnvelope({ ...validImageEnvelope, mime: 'application/octet-stream' })).toBe(false);
+      });
+
+      it('F. Invalid IV rejected', async () => {
+        const { isValidE2EEMediaEnvelope } = await import('./dto/e2ee-envelope.dto.js');
+        expect(isValidE2EEMediaEnvelope({ ...validImageEnvelope, iv: '!not-base64!' })).toBe(false);
+      });
+
+      it('G. IV with wrong length rejected', async () => {
+        const { isValidE2EEMediaEnvelope } = await import('./dto/e2ee-envelope.dto.js');
+        // 16-byte base64 instead of 12-byte
+        expect(isValidE2EEMediaEnvelope({ ...validImageEnvelope, iv: Buffer.from(new Uint8Array(16)).toString('base64') })).toBe(false);
+      });
+
+      it('H. Empty ciphertext rejected', async () => {
+        const { isValidE2EEMediaEnvelope } = await import('./dto/e2ee-envelope.dto.js');
+        expect(isValidE2EEMediaEnvelope({ ...validImageEnvelope, ct: '' })).toBe(false);
+      });
+
+      it('I. Invalid Base64 rejected', async () => {
+        const { isValidE2EEMediaEnvelope } = await import('./dto/e2ee-envelope.dto.js');
+        expect(isValidE2EEMediaEnvelope({ ...validImageEnvelope, ct: '???invalid base64???' })).toBe(false);
+      });
+
+      it('J. Oversized ciphertext rejected', async () => {
+        const { isValidE2EEMediaEnvelope, MAX_MEDIA_CIPHERTEXT_SIZE } = await import('./dto/e2ee-envelope.dto.js');
+        const oversizedCt = 'A'.repeat(MAX_MEDIA_CIPHERTEXT_SIZE + 1);
+        expect(isValidE2EEMediaEnvelope({ ...validImageEnvelope, ct: oversizedCt })).toBe(false);
+      });
+
+      it('K. Backend never attempts decryption', async () => {
+        const { parseE2EEMediaEnvelope } = await import('./dto/e2ee-envelope.dto.js');
+        const parsed = parseE2EEMediaEnvelope(JSON.stringify(validImageEnvelope));
+        expect(parsed).toEqual(validImageEnvelope);
+        expect(parsed?.ct).toBe(validImageEnvelope.ct);
+      });
+    });
+
+    describe('Gateway encrypted media transport', () => {
+      it('L. Stranger encrypted image accepted and persisted', async () => {
+        const socket = createMockSocket('sock-stranger-img');
+        const roomId = 'room-stranger-img';
+        const userId = 'user-alice';
+        const chatId = 'chat-stranger-img';
+
+        mockRedis.getSocketMapping.mockResolvedValue({ roomId, userId, chatId });
+
+        const mockCreated = {
+          id: 'msg-img-1',
+          content: JSON.stringify(validImageEnvelope),
+          chatId,
+          senderId: userId,
+          createdAt: new Date(1700000020000),
+          status: 'delivered',
+          replyTo: null,
+        };
+        mockPrisma.message.create.mockResolvedValue(mockCreated);
+
+        await gateway.sendMessage(socket, {
+          envelope: validImageEnvelope as any,
+          clientId: 'client-img-1',
+        });
+
+        expect(mockPrisma.message.create).toHaveBeenCalledWith({
+          data: {
+            content: JSON.stringify(validImageEnvelope),
+            chatId,
+            senderId: userId,
+            replyToId: null,
+            status: 'delivered',
+            deliveredAt: expect.any(Date),
+          },
+          include: {
+            replyTo: true,
+            reactions: true,
+          },
+        });
+
+        expect(socket.to).toHaveBeenCalledWith(roomId);
+        const emitCalls = socket.to(roomId).emit.mock.calls;
+        const receiveMsgCall = emitCalls.find((call: any[]) => call[0] === 'receive_message');
+        expect(receiveMsgCall).toBeDefined();
+        const payload = receiveMsgCall[1];
+        expect(payload.envelope).toEqual(validImageEnvelope);
+        expect(payload.type).toBe('image');
+        expect(payload.text).toBeUndefined();
+      });
+
+      it('M. Stranger encrypted audio accepted and broadcast', async () => {
+        const socket = createMockSocket('sock-stranger-audio');
+        const roomId = 'room-stranger-audio';
+        const userId = 'user-bob';
+        const chatId = 'chat-stranger-audio';
+
+        mockRedis.getSocketMapping.mockResolvedValue({ roomId, userId, chatId });
+
+        const mockCreated = {
+          id: 'msg-audio-1',
+          content: JSON.stringify(validAudioEnvelope),
+          chatId,
+          senderId: userId,
+          createdAt: new Date(1700000030000),
+          status: 'delivered',
+          replyTo: null,
+        };
+        mockPrisma.message.create.mockResolvedValue(mockCreated);
+
+        await gateway.sendMessage(socket, {
+          envelope: validAudioEnvelope as any,
+          clientId: 'client-audio-1',
+        });
+
+        const emitCalls = socket.to(roomId).emit.mock.calls;
+        const receiveMsgCall = emitCalls.find((call: any[]) => call[0] === 'receive_message');
+        expect(receiveMsgCall).toBeDefined();
+        const payload = receiveMsgCall[1];
+        expect(payload.envelope).toEqual(validAudioEnvelope);
+        expect(payload.type).toBe('audio');
+        expect(payload.text).toBeUndefined();
+      });
+
+      it('N. Friend encrypted image accepted and persisted', async () => {
+        const socket = createMockSocket('sock-friend-img');
+        const roomId = 'room-friend-img';
+        const senderId = 'user-alice';
+        const receiverId = 'user-bob';
+        const chatId = 'chat-friend-img';
+
+        mockRedis.getSocketMapping.mockResolvedValue({ roomId, userId: senderId, chatId });
+
+        mockPrisma.chat.findUnique.mockResolvedValue({
+          id: chatId,
+          userAId: senderId,
+          userBId: receiverId,
+          endedAt: null,
+        });
+
+        mockPrisma.user.findUnique.mockResolvedValue({
+          id: senderId,
+          username: 'Alice',
+        });
+
+        const mockCreated = {
+          id: 'friend-msg-img-1',
+          content: JSON.stringify(validImageEnvelope),
+          chatId,
+          senderId,
+          createdAt: new Date(1700000040000),
+          status: 'sent',
+          replyTo: null,
+        };
+        mockPrisma.message.create.mockResolvedValue(mockCreated);
+
+        await gateway.sendFriendMessage(socket, {
+          roomId,
+          senderId,
+          envelope: validImageEnvelope as any,
+        });
+
+        expect(mockPrisma.message.create).toHaveBeenCalledWith({
+          data: {
+            content: JSON.stringify(validImageEnvelope),
+            chatId,
+            senderId,
+            replyToId: null,
+            status: 'sent',
+          },
+          include: {
+            replyTo: true,
+          },
+        });
+
+        expect(gateway.server.to).toHaveBeenCalledWith(roomId);
+        const serverToMock = (gateway.server.to as any)(roomId).emit;
+        expect(serverToMock).toHaveBeenCalledWith('receive_friend_message', expect.objectContaining({
+          id: 'friend-msg-img-1',
+          envelope: validImageEnvelope,
+          type: 'image',
+        }));
+        const friendPayload = serverToMock.mock.calls[0][1];
+        expect(friendPayload.text).toBeUndefined();
+
+        expect(mockNotifications.createNotification).toHaveBeenCalledWith(
+          expect.objectContaining({
+            userId: receiverId,
+            type: 'NEW_MESSAGE',
+            title: 'New message from Alice',
+            body: 'New encrypted photo',
+          }),
+        );
+      });
+
+      it('O. Friend encrypted audio accepted and broadcast', async () => {
+        const socket = createMockSocket('sock-friend-audio');
+        const roomId = 'room-friend-audio';
+        const senderId = 'user-alice';
+        const receiverId = 'user-bob';
+        const chatId = 'chat-friend-audio';
+
+        mockRedis.getSocketMapping.mockResolvedValue({ roomId, userId: senderId, chatId });
+
+        mockPrisma.chat.findUnique.mockResolvedValue({
+          id: chatId,
+          userAId: senderId,
+          userBId: receiverId,
+          endedAt: null,
+        });
+
+        mockPrisma.user.findUnique.mockResolvedValue({
+          id: senderId,
+          username: 'Alice',
+        });
+
+        const mockCreated = {
+          id: 'friend-msg-audio-1',
+          content: JSON.stringify(validAudioEnvelope),
+          chatId,
+          senderId,
+          createdAt: new Date(1700000050000),
+          status: 'sent',
+          replyTo: null,
+        };
+        mockPrisma.message.create.mockResolvedValue(mockCreated);
+
+        await gateway.sendFriendMessage(socket, {
+          roomId,
+          senderId,
+          envelope: validAudioEnvelope as any,
+        });
+
+        expect(mockNotifications.createNotification).toHaveBeenCalledWith(
+          expect.objectContaining({
+            userId: receiverId,
+            type: 'NEW_MESSAGE',
+            body: 'New encrypted voice message',
+          }),
+        );
+      });
+
+      it('P. Invalid encrypted media rejected', async () => {
+        const socket = createMockSocket('sock-invalid-media');
+        const roomId = 'room-invalid-media';
+        const userId = 'user-alice';
+        const chatId = 'chat-invalid-media';
+
+        mockRedis.getSocketMapping.mockResolvedValue({ roomId, userId, chatId });
+
+        const malformedMediaEnvelope = {
+          e2ee: true,
+          v: 1,
+          type: 'image',
+          mime: 'application/exe',
+          iv: 'invalid-iv',
+          ct: '',
+        };
+
+        await gateway.sendMessage(socket, {
+          envelope: malformedMediaEnvelope as any,
+          clientId: 'client-err-1',
+        });
+
+        expect(mockPrisma.message.create).not.toHaveBeenCalled();
+        expect(socket.emit).toHaveBeenCalledWith('message_error', {
+          clientId: 'client-err-1',
+          message: 'Invalid E2EE message envelope',
+        });
+      });
+
+      it('Q. No plaintext text field is required for encrypted media', async () => {
+        const socket = createMockSocket('sock-no-text');
+        const roomId = 'room-no-text';
+        const userId = 'user-alice';
+        const chatId = 'chat-no-text';
+
+        mockRedis.getSocketMapping.mockResolvedValue({ roomId, userId, chatId });
+
+        mockPrisma.message.create.mockResolvedValue({
+          id: 'msg-no-text-1',
+          content: JSON.stringify(validImageEnvelope),
+          chatId,
+          senderId: userId,
+          createdAt: new Date(),
+          status: 'delivered',
+          replyTo: null,
+        });
+
+        await expect(
+          gateway.sendMessage(socket, {
+            envelope: validImageEnvelope as any,
+          }),
+        ).resolves.not.toThrow();
+
+        expect(mockPrisma.message.create).toHaveBeenCalled();
+      });
+
+      it('R. Legacy text messages still work', async () => {
+        const socket = createMockSocket('sock-legacy');
+        const roomId = 'room-legacy';
+        const userId = 'user-alice';
+        const chatId = 'chat-legacy';
+
+        mockRedis.getSocketMapping.mockResolvedValue({ roomId, userId, chatId });
+
+        mockPrisma.message.create.mockResolvedValue({
+          id: 'legacy-msg-1',
+          content: 'Hello legacy world',
+          chatId,
+          senderId: userId,
+          createdAt: new Date(),
+          status: 'delivered',
+          replyTo: null,
+        });
+
+        await gateway.sendMessage(socket, {
+          text: 'Hello legacy world',
+          clientId: 'legacy-client-1',
+        });
+
+        expect(mockPrisma.message.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              content: 'Hello legacy world',
+            }),
+          }),
+        );
+      });
+
+      it('S. Encrypted media history remains opaque on backend', async () => {
+        const chatId = 'chat-history-media';
+        const currentUserId = 'user-alice';
+
+        const imageMessage = {
+          id: 'hist-img-1',
+          content: JSON.stringify(validImageEnvelope),
+          senderId: 'user-bob',
+          createdAt: new Date(1700000000000),
+          status: 'seen',
+          deliveredAt: null,
+          seenAt: null,
+          deletedAt: null,
+          replyTo: {
+            id: 'target-audio-msg',
+            content: JSON.stringify(validAudioEnvelope),
+            senderId: 'user-alice',
+          },
+          reactions: [],
+        };
+
+        mockPrisma.message.findMany.mockResolvedValue([imageMessage]);
+
+        const formatted = await gateway['getFormattedMessages'](chatId, currentUserId);
+        expect(formatted).toHaveLength(1);
+
+        expect(formatted[0].id).toBe('hist-img-1');
+        expect(formatted[0].envelope).toEqual(validImageEnvelope);
+        expect(formatted[0].type).toBe('image');
+        expect(formatted[0].text).toBeUndefined();
+
+        expect(formatted[0].replyTo).toEqual({
+          id: 'target-audio-msg',
+          content: JSON.stringify(validAudioEnvelope),
+          text: 'Encrypted audio',
+          sender: 'me',
+          type: 'audio',
+        });
+      });
+    });
+  });
 });
 

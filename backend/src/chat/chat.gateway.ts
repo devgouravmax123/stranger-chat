@@ -18,8 +18,13 @@ import { SessionTokenService } from '../auth/session-token.service.js';
 import { corsOptions } from '../common/cors.config.js';
 import {
   BackendE2EEMessageEnvelope,
+  BackendE2EEMediaEnvelope,
+  BackendE2EEAnyEnvelope,
   isValidE2EEEnvelope,
+  isValidE2EEMediaEnvelope,
   parseE2EEEnvelope,
+  parseE2EEMediaEnvelope,
+  parseE2EEAnyEnvelope,
 } from './dto/e2ee-envelope.dto.js';
 
 interface WaitingUser {
@@ -41,7 +46,7 @@ interface UserProfile {
 
 interface SendMessageDto {
   text?: string;
-  envelope?: BackendE2EEMessageEnvelope;
+  envelope?: BackendE2EEAnyEnvelope;
   clientId?: string;
   replyToId?: string;
 }
@@ -50,7 +55,7 @@ interface SendFriendMessageDto {
   roomId: string;
   senderId?: string;
   text?: string;
-  envelope?: BackendE2EEMessageEnvelope;
+  envelope?: BackendE2EEAnyEnvelope;
   replyToId?: string;
 }
 
@@ -791,25 +796,38 @@ export class ChatGateway implements OnGatewayInit {
 
     let content: string | null = null;
     let isE2EE = false;
-    let validEnvelope: BackendE2EEMessageEnvelope | null = null;
+    let validEnvelope: BackendE2EEAnyEnvelope | null = null;
 
     if (data?.envelope) {
-      if (!isValidE2EEEnvelope(data.envelope)) {
+      if (isValidE2EEMediaEnvelope(data.envelope)) {
+        validEnvelope = {
+          e2ee: true,
+          v: 1,
+          type: data.envelope.type,
+          mime: data.envelope.mime,
+          iv: data.envelope.iv,
+          ct: data.envelope.ct,
+        };
+        // Serialize compact media envelope directly without inspecting or decrypting ciphertext
+        content = JSON.stringify(validEnvelope);
+        isE2EE = true;
+      } else if (isValidE2EEEnvelope(data.envelope)) {
+        validEnvelope = {
+          e2ee: true,
+          v: 1,
+          iv: data.envelope.iv,
+          ct: data.envelope.ct,
+        };
+        // Serialize compact text envelope directly without inspecting or decrypting ciphertext
+        content = JSON.stringify(validEnvelope);
+        isE2EE = true;
+      } else {
         socket.emit('message_error', {
           clientId: data.clientId,
           message: 'Invalid E2EE message envelope',
         });
         return;
       }
-      validEnvelope = {
-        e2ee: true,
-        v: 1,
-        iv: data.envelope.iv,
-        ct: data.envelope.ct,
-      };
-      // Serialize compact envelope directly without inspecting or decrypting ciphertext
-      content = JSON.stringify(validEnvelope);
-      isE2EE = true;
     } else if (data?.text?.trim()) {
       // Legacy plaintext path during transition
       content = data.text.trim();
@@ -847,9 +865,17 @@ export class ChatGateway implements OnGatewayInit {
     if (message.replyTo) {
       const isReplyAudio = message.replyTo.content.startsWith('audio:');
       const isReplyImage = message.replyTo.content.startsWith('image:');
-      const replyEnvelope = parseE2EEEnvelope(message.replyTo.content);
+      const replyMediaEnv = parseE2EEMediaEnvelope(message.replyTo.content);
+      const replyTextEnv = !replyMediaEnv ? parseE2EEEnvelope(message.replyTo.content) : null;
 
-      if (replyEnvelope) {
+      if (replyMediaEnv) {
+        replyToPayload = {
+          id: message.replyTo.id,
+          content: message.replyTo.content, // Opaque encrypted envelope string
+          text: replyMediaEnv.type === 'image' ? 'Encrypted image' : 'Encrypted audio',
+          type: replyMediaEnv.type,
+        };
+      } else if (replyTextEnv) {
         replyToPayload = {
           id: message.replyTo.id,
           content: message.replyTo.content, // Opaque encrypted envelope string
@@ -866,6 +892,9 @@ export class ChatGateway implements OnGatewayInit {
 
     // Broadcast to stranger in room
     if (isE2EE && validEnvelope) {
+      const isMedia = 'type' in validEnvelope && (validEnvelope.type === 'image' || validEnvelope.type === 'audio');
+      const messageType = isMedia ? (validEnvelope as BackendE2EEMediaEnvelope).type : 'text';
+
       // E2EE path: Emit envelope, DO NOT include text property
       socket.to(roomId).emit('receive_message', {
         id: message.id,
@@ -873,7 +902,7 @@ export class ChatGateway implements OnGatewayInit {
         envelope: validEnvelope,
         senderId: userId,
         timestamp: message.createdAt.getTime(),
-        type: 'text',
+        type: messageType,
         status: 'delivered',
         replyTo: replyToPayload,
       });
@@ -1479,24 +1508,37 @@ export class ChatGateway implements OnGatewayInit {
 
     let content: string | null = null;
     let isE2EE = false;
-    let validEnvelope: BackendE2EEMessageEnvelope | null = null;
+    let validEnvelope: BackendE2EEAnyEnvelope | null = null;
 
     if (data?.envelope) {
-      if (!isValidE2EEEnvelope(data.envelope)) {
+      if (isValidE2EEMediaEnvelope(data.envelope)) {
+        validEnvelope = {
+          e2ee: true,
+          v: 1,
+          type: data.envelope.type,
+          mime: data.envelope.mime,
+          iv: data.envelope.iv,
+          ct: data.envelope.ct,
+        };
+        // Store opaque serialized media envelope directly
+        content = JSON.stringify(validEnvelope);
+        isE2EE = true;
+      } else if (isValidE2EEEnvelope(data.envelope)) {
+        validEnvelope = {
+          e2ee: true,
+          v: 1,
+          iv: data.envelope.iv,
+          ct: data.envelope.ct,
+        };
+        // Store opaque serialized text envelope directly
+        content = JSON.stringify(validEnvelope);
+        isE2EE = true;
+      } else {
         socket.emit('friend_message_error', {
           message: 'Invalid E2EE message envelope',
         });
         return;
       }
-      validEnvelope = {
-        e2ee: true,
-        v: 1,
-        iv: data.envelope.iv,
-        ct: data.envelope.ct,
-      };
-      // Store opaque serialized envelope directly
-      content = JSON.stringify(validEnvelope);
-      isE2EE = true;
     } else if (data?.text?.trim()) {
       // Legacy plaintext path during transition
       content = data.text.trim();
@@ -1537,12 +1579,20 @@ export class ChatGateway implements OnGatewayInit {
     if (message.replyTo) {
       const isReplyAudio = message.replyTo.content.startsWith('audio:');
       const isReplyImage = message.replyTo.content.startsWith('image:');
-      const replyEnvelope = parseE2EEEnvelope(message.replyTo.content);
+      const replyMediaEnv = parseE2EEMediaEnvelope(message.replyTo.content);
+      const replyTextEnv = !replyMediaEnv ? parseE2EEEnvelope(message.replyTo.content) : null;
 
-      if (replyEnvelope) {
+      if (replyMediaEnv) {
         replyToPayload = {
           id: message.replyTo.id,
-          content: message.replyTo.content,
+          content: message.replyTo.content, // Opaque encrypted envelope string
+          text: replyMediaEnv.type === 'image' ? 'Encrypted image' : 'Encrypted audio',
+          type: replyMediaEnv.type,
+        };
+      } else if (replyTextEnv) {
+        replyToPayload = {
+          id: message.replyTo.id,
+          content: message.replyTo.content, // Opaque encrypted envelope string
           type: 'text',
         };
       } else {
@@ -1555,13 +1605,16 @@ export class ChatGateway implements OnGatewayInit {
     }
 
     if (isE2EE && validEnvelope) {
+      const isMedia = 'type' in validEnvelope && (validEnvelope.type === 'image' || validEnvelope.type === 'audio');
+      const messageType = isMedia ? (validEnvelope as BackendE2EEMediaEnvelope).type : 'text';
+
       // E2EE path: Emit envelope, DO NOT include plaintext text
       this.server.to(roomId).emit('receive_friend_message', {
         id: message.id,
         envelope: validEnvelope,
         senderId: authenticatedSenderId,
         timestamp: message.createdAt.getTime(),
-        type: 'text',
+        type: messageType,
         status: 'sent',
         replyTo: replyToPayload,
       });
@@ -1593,9 +1646,12 @@ export class ChatGateway implements OnGatewayInit {
         const senderName = senderUser?.username || 'A friend';
 
         // CRITICAL: For E2EE messages, notification body MUST be generic. NEVER extract or preview ciphertext!
-        const notificationBody = isE2EE
-          ? 'New encrypted message'
-          : (data.text && data.text.length > 60 ? `${data.text.substring(0, 60)}...` : data.text || 'New message');
+        let notificationBody = 'New encrypted message';
+        if (isE2EE && validEnvelope && 'type' in validEnvelope) {
+          notificationBody = validEnvelope.type === 'image' ? 'New encrypted photo' : 'New encrypted voice message';
+        } else if (!isE2EE) {
+          notificationBody = data.text && data.text.length > 60 ? `${data.text.substring(0, 60)}...` : data.text || 'New message';
+        }
 
         await this.notifications.createNotification({
           userId: receiverId,
@@ -2247,7 +2303,9 @@ export class ChatGateway implements OnGatewayInit {
     return raw.map((item) => {
       const isAudio = item.content.startsWith('audio:');
       const isImage = item.content.startsWith('image:');
-      const e2eeEnvelope = parseE2EEEnvelope(item.content);
+      const mediaEnvelope = parseE2EEMediaEnvelope(item.content);
+      const textEnvelope = !mediaEnvelope ? parseE2EEEnvelope(item.content) : null;
+      const anyEnvelope = mediaEnvelope || textEnvelope;
 
       // Construct safe replyTo reference without plaintext preview for E2EE
       let replyToPayload: {
@@ -2261,9 +2319,18 @@ export class ChatGateway implements OnGatewayInit {
       if (item.replyTo) {
         const isReplyAudio = item.replyTo.content.startsWith('audio:');
         const isReplyImage = item.replyTo.content.startsWith('image:');
-        const replyEnvelope = parseE2EEEnvelope(item.replyTo.content);
+        const replyMediaEnvelope = parseE2EEMediaEnvelope(item.replyTo.content);
+        const replyTextEnvelope = !replyMediaEnvelope ? parseE2EEEnvelope(item.replyTo.content) : null;
 
-        if (replyEnvelope) {
+        if (replyMediaEnvelope) {
+          replyToPayload = {
+            id: item.replyTo.id,
+            content: item.replyTo.content,
+            text: replyMediaEnvelope.type === 'image' ? 'Encrypted image' : 'Encrypted audio',
+            sender: item.replyTo.senderId === currentUserId ? 'me' : 'stranger',
+            type: replyMediaEnvelope.type,
+          };
+        } else if (replyTextEnvelope) {
           replyToPayload = {
             id: item.replyTo.id,
             content: item.replyTo.content,
@@ -2281,11 +2348,15 @@ export class ChatGateway implements OnGatewayInit {
       }
 
       // Base message payload
+      const calculatedType = mediaEnvelope
+        ? mediaEnvelope.type
+        : (isImage ? 'image' : isAudio ? 'audio' : 'text');
+
       const basePayload = {
         id: item.id,
         senderId: item.senderId,
         createdAt: item.createdAt,
-        type: (isImage ? 'image' : isAudio ? 'audio' : 'text') as 'text' | 'image' | 'audio',
+        type: calculatedType as 'text' | 'image' | 'audio',
         audioUrl: isAudio ? item.content.replace('audio:', '') : undefined,
         imageUrl: isImage ? item.content.replace('image:', '') : undefined,
         status: item.status,
@@ -2296,11 +2367,11 @@ export class ChatGateway implements OnGatewayInit {
         reactions: item.reactions || [],
       };
 
-      if (e2eeEnvelope) {
+      if (anyEnvelope) {
         // E2EE message: return envelope without decrypting or exposing a plaintext 'text' field
         return {
           ...basePayload,
-          envelope: e2eeEnvelope,
+          envelope: anyEnvelope,
         };
       }
 
