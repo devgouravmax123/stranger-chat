@@ -16,6 +16,11 @@ import { FriendsService } from '../friends/friends.service.js';
 import { MatchingService, MatchPreferences } from './matching.service.js';
 import { SessionTokenService } from '../auth/session-token.service.js';
 import { corsOptions } from '../common/cors.config.js';
+import {
+  BackendE2EEMessageEnvelope,
+  isValidE2EEEnvelope,
+  parseE2EEEnvelope,
+} from './dto/e2ee-envelope.dto.js';
 
 interface WaitingUser {
   socket: Socket;
@@ -35,8 +40,17 @@ interface UserProfile {
 }
 
 interface SendMessageDto {
-  text: string;
+  text?: string;
+  envelope?: BackendE2EEMessageEnvelope;
   clientId?: string;
+  replyToId?: string;
+}
+
+interface SendFriendMessageDto {
+  roomId: string;
+  senderId?: string;
+  text?: string;
+  envelope?: BackendE2EEMessageEnvelope;
   replyToId?: string;
 }
 
@@ -564,6 +578,7 @@ export class ChatGateway implements OnGatewayInit {
 
     stranger.emit('matched', {
       roomId,
+      chatId: chat.id,
       userId: strangerUserId,
       strangerUserId: userId,
       score,
@@ -572,6 +587,7 @@ export class ChatGateway implements OnGatewayInit {
 
     socket.emit('matched', {
       roomId,
+      chatId: chat.id,
       userId,
       strangerUserId,
       score,
@@ -643,6 +659,7 @@ export class ChatGateway implements OnGatewayInit {
 
     sockA.emit('matched', {
       roomId,
+      chatId: chat.id,
       userId: userAId,
       strangerUserId: userBId,
       score,
@@ -651,6 +668,7 @@ export class ChatGateway implements OnGatewayInit {
 
     sockB.emit('matched', {
       roomId,
+      chatId: chat.id,
       userId: userBId,
       strangerUserId: userAId,
       score,
@@ -769,14 +787,41 @@ export class ChatGateway implements OnGatewayInit {
     }
 
     const { roomId, userId, chatId } = await this.getSocketContext(socket);
-    if (!roomId || !userId || !chatId || !data?.text?.trim()) return;
+    if (!roomId || !userId || !chatId) return;
 
-    const text = data.text.trim();
+    let content: string | null = null;
+    let isE2EE = false;
+    let validEnvelope: BackendE2EEMessageEnvelope | null = null;
+
+    if (data?.envelope) {
+      if (!isValidE2EEEnvelope(data.envelope)) {
+        socket.emit('message_error', {
+          clientId: data.clientId,
+          message: 'Invalid E2EE message envelope',
+        });
+        return;
+      }
+      validEnvelope = {
+        e2ee: true,
+        v: 1,
+        iv: data.envelope.iv,
+        ct: data.envelope.ct,
+      };
+      // Serialize compact envelope directly without inspecting or decrypting ciphertext
+      content = JSON.stringify(validEnvelope);
+      isE2EE = true;
+    } else if (data?.text?.trim()) {
+      // Legacy plaintext path during transition
+      content = data.text.trim();
+    } else {
+      return;
+    }
+
     const replyToId = data.replyToId || null;
 
     const message = await this.prisma.message.create({
       data: {
-        content: text,
+        content,
         chatId,
         senderId: userId,
         replyToId,
@@ -797,27 +842,54 @@ export class ChatGateway implements OnGatewayInit {
       status: 'delivered',
     });
 
+    // Determine replyTo structure without creating server-side plaintext reply previews for E2EE
+    let replyToPayload: { id: string; content?: string; text?: string; type?: string } | null = null;
+    if (message.replyTo) {
+      const isReplyAudio = message.replyTo.content.startsWith('audio:');
+      const isReplyImage = message.replyTo.content.startsWith('image:');
+      const replyEnvelope = parseE2EEEnvelope(message.replyTo.content);
+
+      if (replyEnvelope) {
+        replyToPayload = {
+          id: message.replyTo.id,
+          content: message.replyTo.content, // Opaque encrypted envelope string
+          type: 'text',
+        };
+      } else {
+        replyToPayload = {
+          id: message.replyTo.id,
+          text: message.replyTo.content,
+          type: isReplyAudio ? 'audio' : isReplyImage ? 'image' : 'text',
+        };
+      }
+    }
+
     // Broadcast to stranger in room
-    socket.to(roomId).emit('receive_message', {
-      id: message.id,
-      clientId: data.clientId,
-      text: message.content,
-      senderId: userId,
-      timestamp: message.createdAt.getTime(),
-      type: 'text',
-      status: 'delivered',
-      replyTo: message.replyTo
-        ? {
-            id: message.replyTo.id,
-            text: message.replyTo.content,
-            type: message.replyTo.content.startsWith('audio:')
-              ? 'audio'
-              : message.replyTo.content.startsWith('image:')
-              ? 'image'
-              : 'text',
-          }
-        : null,
-    });
+    if (isE2EE && validEnvelope) {
+      // E2EE path: Emit envelope, DO NOT include text property
+      socket.to(roomId).emit('receive_message', {
+        id: message.id,
+        clientId: data.clientId,
+        envelope: validEnvelope,
+        senderId: userId,
+        timestamp: message.createdAt.getTime(),
+        type: 'text',
+        status: 'delivered',
+        replyTo: replyToPayload,
+      });
+    } else {
+      // Legacy plaintext path
+      socket.to(roomId).emit('receive_message', {
+        id: message.id,
+        clientId: data.clientId,
+        text: message.content,
+        senderId: userId,
+        timestamp: message.createdAt.getTime(),
+        type: 'text',
+        status: 'delivered',
+        replyTo: replyToPayload,
+      });
+    }
 
     // Notify sender that message was delivered
     socket.emit('message_delivered', {
@@ -1395,12 +1467,44 @@ export class ChatGateway implements OnGatewayInit {
   @SubscribeMessage('send_friend_message')
   async sendFriendMessage(
     @ConnectedSocket() socket: Socket,
-    @MessageBody() data: { roomId: string; senderId: string; text: string; replyToId?: string },
+    @MessageBody() data: SendFriendMessageDto,
   ) {
-    const { roomId, senderId, text, replyToId } = data;
-    if (!roomId || !senderId || !text?.trim()) return;
+    const { roomId, replyToId } = data;
+    if (!roomId) return;
 
-    let { chatId } = await this.getSocketContext(socket);
+    // Preserve authenticated identity: prefer authenticated socket context, fallback to data.senderId
+    const socketContext = await this.getSocketContext(socket);
+    const authenticatedSenderId = socketContext.userId || data.senderId;
+    if (!authenticatedSenderId) return;
+
+    let content: string | null = null;
+    let isE2EE = false;
+    let validEnvelope: BackendE2EEMessageEnvelope | null = null;
+
+    if (data?.envelope) {
+      if (!isValidE2EEEnvelope(data.envelope)) {
+        socket.emit('friend_message_error', {
+          message: 'Invalid E2EE message envelope',
+        });
+        return;
+      }
+      validEnvelope = {
+        e2ee: true,
+        v: 1,
+        iv: data.envelope.iv,
+        ct: data.envelope.ct,
+      };
+      // Store opaque serialized envelope directly
+      content = JSON.stringify(validEnvelope);
+      isE2EE = true;
+    } else if (data?.text?.trim()) {
+      // Legacy plaintext path during transition
+      content = data.text.trim();
+    } else {
+      return;
+    }
+
+    let chatId = socketContext.chatId;
     if (!chatId && roomId.startsWith('friend-')) {
       const parts = roomId.replace('friend-', '').split('-');
       if (parts.length === 2) {
@@ -1419,33 +1523,60 @@ export class ChatGateway implements OnGatewayInit {
 
     const message = await this.prisma.message.create({
       data: {
-        content: text.trim(),
+        content,
         chatId,
-        senderId,
+        senderId: authenticatedSenderId,
         replyToId: replyToId || null,
         status: 'sent',
       },
       include: { replyTo: true },
     });
 
-    this.server.to(roomId).emit('receive_friend_message', {
-      id: message.id,
-      text: message.content,
-      senderId,
-      timestamp: message.createdAt.getTime(),
-      type: 'text',
-      replyTo: message.replyTo
-        ? {
-            id: message.replyTo.id,
-            text: message.replyTo.content,
-            type: message.replyTo.content.startsWith('audio:')
-              ? 'audio'
-              : message.replyTo.content.startsWith('image:')
-              ? 'image'
-              : 'text',
-          }
-        : null,
-    });
+    // Determine replyTo structure without creating server-side plaintext reply previews for E2EE
+    let replyToPayload: { id: string; content?: string; text?: string; type?: string } | null = null;
+    if (message.replyTo) {
+      const isReplyAudio = message.replyTo.content.startsWith('audio:');
+      const isReplyImage = message.replyTo.content.startsWith('image:');
+      const replyEnvelope = parseE2EEEnvelope(message.replyTo.content);
+
+      if (replyEnvelope) {
+        replyToPayload = {
+          id: message.replyTo.id,
+          content: message.replyTo.content,
+          type: 'text',
+        };
+      } else {
+        replyToPayload = {
+          id: message.replyTo.id,
+          text: message.replyTo.content,
+          type: isReplyAudio ? 'audio' : isReplyImage ? 'image' : 'text',
+        };
+      }
+    }
+
+    if (isE2EE && validEnvelope) {
+      // E2EE path: Emit envelope, DO NOT include plaintext text
+      this.server.to(roomId).emit('receive_friend_message', {
+        id: message.id,
+        envelope: validEnvelope,
+        senderId: authenticatedSenderId,
+        timestamp: message.createdAt.getTime(),
+        type: 'text',
+        status: 'sent',
+        replyTo: replyToPayload,
+      });
+    } else {
+      // Legacy plaintext path
+      this.server.to(roomId).emit('receive_friend_message', {
+        id: message.id,
+        text: message.content,
+        senderId: authenticatedSenderId,
+        timestamp: message.createdAt.getTime(),
+        type: 'text',
+        status: 'sent',
+        replyTo: replyToPayload,
+      });
+    }
 
     // Create in-app notification for the friend
     try {
@@ -1454,18 +1585,24 @@ export class ChatGateway implements OnGatewayInit {
         select: { userAId: true, userBId: true },
       });
       if (chat) {
-        const receiverId = chat.userAId === senderId ? chat.userBId : chat.userAId;
+        const receiverId = chat.userAId === authenticatedSenderId ? chat.userBId : chat.userAId;
         const senderUser = await this.prisma.user.findUnique({
-          where: { id: senderId },
+          where: { id: authenticatedSenderId },
           select: { username: true },
         });
         const senderName = senderUser?.username || 'A friend';
+
+        // CRITICAL: For E2EE messages, notification body MUST be generic. NEVER extract or preview ciphertext!
+        const notificationBody = isE2EE
+          ? 'New encrypted message'
+          : (data.text && data.text.length > 60 ? `${data.text.substring(0, 60)}...` : data.text || 'New message');
+
         await this.notifications.createNotification({
           userId: receiverId,
           type: 'NEW_MESSAGE',
           title: `New message from ${senderName}`,
-          body: text.length > 60 ? `${text.substring(0, 60)}...` : text,
-          data: { friendId: senderId, chatId, roomId },
+          body: notificationBody,
+          data: { friendId: authenticatedSenderId, chatId, roomId },
         });
       }
     } catch (e) {
@@ -2110,32 +2247,67 @@ export class ChatGateway implements OnGatewayInit {
     return raw.map((item) => {
       const isAudio = item.content.startsWith('audio:');
       const isImage = item.content.startsWith('image:');
+      const e2eeEnvelope = parseE2EEEnvelope(item.content);
 
-      return {
+      // Construct safe replyTo reference without plaintext preview for E2EE
+      let replyToPayload: {
+        id: string;
+        content?: string;
+        text?: string;
+        sender: string;
+        type: string;
+      } | null = null;
+
+      if (item.replyTo) {
+        const isReplyAudio = item.replyTo.content.startsWith('audio:');
+        const isReplyImage = item.replyTo.content.startsWith('image:');
+        const replyEnvelope = parseE2EEEnvelope(item.replyTo.content);
+
+        if (replyEnvelope) {
+          replyToPayload = {
+            id: item.replyTo.id,
+            content: item.replyTo.content,
+            sender: item.replyTo.senderId === currentUserId ? 'me' : 'stranger',
+            type: 'text',
+          };
+        } else {
+          replyToPayload = {
+            id: item.replyTo.id,
+            text: item.replyTo.content,
+            sender: item.replyTo.senderId === currentUserId ? 'me' : 'stranger',
+            type: isReplyAudio ? 'audio' : isReplyImage ? 'image' : 'text',
+          };
+        }
+      }
+
+      // Base message payload
+      const basePayload = {
         id: item.id,
-        text: isImage ? 'Photo message' : isAudio ? 'Voice message' : item.content,
         senderId: item.senderId,
         createdAt: item.createdAt,
-        type: isImage ? 'image' : isAudio ? 'audio' : 'text',
+        type: (isImage ? 'image' : isAudio ? 'audio' : 'text') as 'text' | 'image' | 'audio',
         audioUrl: isAudio ? item.content.replace('audio:', '') : undefined,
         imageUrl: isImage ? item.content.replace('image:', '') : undefined,
         status: item.status,
         deliveredAt: item.deliveredAt ? item.deliveredAt.getTime() : undefined,
         seenAt: item.seenAt ? item.seenAt.getTime() : undefined,
         deletedAt: item.deletedAt ? item.deletedAt.getTime() : undefined,
-        replyTo: item.replyTo
-          ? {
-              id: item.replyTo.id,
-              text: item.replyTo.content,
-              sender: item.replyTo.senderId === currentUserId ? 'me' : 'stranger',
-              type: item.replyTo.content.startsWith('audio:')
-                ? 'audio'
-                : item.replyTo.content.startsWith('image:')
-                ? 'image'
-                : 'text',
-            }
-          : null,
+        replyTo: replyToPayload,
         reactions: item.reactions || [],
+      };
+
+      if (e2eeEnvelope) {
+        // E2EE message: return envelope without decrypting or exposing a plaintext 'text' field
+        return {
+          ...basePayload,
+          envelope: e2eeEnvelope,
+        };
+      }
+
+      // Legacy plaintext message or media message
+      return {
+        ...basePayload,
+        text: isImage ? 'Photo message' : isAudio ? 'Voice message' : item.content,
       };
     });
   }

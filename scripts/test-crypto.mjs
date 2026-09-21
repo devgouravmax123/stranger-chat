@@ -125,9 +125,200 @@ async function runAllTests() {
   }
 
   console.log("\nAll 5 Phase 2 lifecycle states passed verification successfully!");
+
+  // ==========================================
+  // PHASE 3 STEP 1 TESTS: E2EE MESSAGING PROTOCOL & ENVELOPE
+  // ==========================================
+  console.log("\n3. Testing Phase 3 Step 1 E2EE Messaging Protocol & Envelope...");
+
+  const {
+    isE2EEMessageEnvelope,
+    packE2EEMessage,
+    unpackE2EEMessage,
+    getConversationSharedKey,
+    clearConversationKeyCache,
+    encryptTextMessage,
+    decryptTextMessage,
+  } = await import("../lib/crypto.ts");
+
+  // 1. Envelope validation & parsing checks
+  console.log("   A. Envelope validation & rejection rules");
+  const validEnvelope = {
+    e2ee: true,
+    v: 1,
+    iv: "MTIzNDU2Nzg5MDEy", // exactly 12 bytes: "123456789012" in Base64
+    ct: "c29tZS1jaXBoZXJ0ZXh0", // "some-ciphertext" in Base64
+  };
+  if (!isE2EEMessageEnvelope(validEnvelope)) {
+    throw new Error("Valid envelope was rejected by isE2EEMessageEnvelope");
+  }
+
+  // Reject malformed envelopes
+  if (isE2EEMessageEnvelope(null)) throw new Error("Accepted null envelope");
+  if (isE2EEMessageEnvelope("string")) throw new Error("Accepted string envelope");
+  if (isE2EEMessageEnvelope({ ...validEnvelope, e2ee: false })) throw new Error("Accepted e2ee: false");
+  if (isE2EEMessageEnvelope({ ...validEnvelope, v: 2 })) throw new Error("Accepted unsupported version 2");
+  if (isE2EEMessageEnvelope({ ...validEnvelope, iv: "short" })) throw new Error("Accepted non-12-byte IV");
+  if (isE2EEMessageEnvelope({ ...validEnvelope, iv: "!@#$%" })) throw new Error("Accepted invalid Base64 IV");
+  if (isE2EEMessageEnvelope({ ...validEnvelope, ct: "" })) throw new Error("Accepted empty ciphertext");
+  if (isE2EEMessageEnvelope({ ...validEnvelope, ct: 12345 })) throw new Error("Accepted non-string ciphertext");
+
+  const packed = packE2EEMessage(validEnvelope);
+  const unpacked = unpackE2EEMessage(packed);
+  if (!unpacked || unpacked.iv !== validEnvelope.iv || unpacked.ct !== validEnvelope.ct) {
+    throw new Error("Failed pack/unpack roundtrip");
+  }
+
+  if (unpackE2EEMessage("{ invalid json") !== null) throw new Error("unpackE2EEMessage threw or parsed invalid JSON");
+  if (unpackE2EEMessage("plain text message") !== null) throw new Error("unpackE2EEMessage parsed plain text");
+  if (unpackE2EEMessage(JSON.stringify({ text: "legacy" })) !== null) throw new Error("unpackE2EEMessage parsed legacy object");
+
+  console.log("      ✓ All envelope type-guards and unpack guards passed.");
+
+  // 2. Pairwise Conversation Key Derivation & End-to-End Encryption
+  console.log("   B. Two-party pairwise message encryption & decryption");
+  const alicePair = await generateECDHKeyPair(true);
+  const bobPair = await generateECDHKeyPair(true);
+  const alicePublicBase64 = await exportPublicKey(alicePair.publicKey);
+  const bobPublicBase64 = await exportPublicKey(bobPair.publicKey);
+
+  // Setup Alice in mock IndexedDB
+  mockStore.set("chirp_identity_keypair", {
+    id: "chirp_identity_keypair",
+    publicKey: alicePair.publicKey,
+    privateKey: alicePair.privateKey,
+  });
+
+  const chatId = "chat-room-456";
+  const senderId = "user-alice";
+
+  // Test various message contents
+  const testCases = [
+    "hello",
+    "hello again",
+    "",
+    "Hello 👋 世界! 🚀 🔒 E2EE test with multi-byte characters and symbols.",
+    "A".repeat(5000), // long message
+  ];
+
+  for (const plaintext of testCases) {
+    // Alice encrypts for Bob
+    const encryptedRaw = await encryptTextMessage(plaintext, chatId, senderId, bobPublicBase64);
+    const parsedEnv = unpackE2EEMessage(encryptedRaw);
+    if (!parsedEnv) throw new Error("Produced invalid envelope string");
+
+    // Bob decrypts Alice's message (switch local identity to Bob)
+    mockStore.set("chirp_identity_keypair", {
+      id: "chirp_identity_keypair",
+      publicKey: bobPair.publicKey,
+      privateKey: bobPair.privateKey,
+    });
+    clearConversationKeyCache(); // Clear cache to ensure Bob uses Bob's key
+
+    const decrypted = await decryptTextMessage(encryptedRaw, chatId, senderId, alicePublicBase64);
+    if (decrypted !== plaintext) {
+      throw new Error(`Decrypted message mismatch! Expected '${plaintext}', got '${decrypted}'`);
+    }
+
+    // Switch back to Alice for next iteration
+    mockStore.set("chirp_identity_keypair", {
+      id: "chirp_identity_keypair",
+      publicKey: alicePair.publicKey,
+      privateKey: alicePair.privateKey,
+    });
+    clearConversationKeyCache();
+  }
+  console.log("      ✓ Successfully encrypted and decrypted normal, empty, unicode, and large messages.");
+
+  // 3. Verify IV randomness and ciphertext variation
+  console.log("   C. Nonce / IV uniqueness verification");
+  const enc1 = await encryptTextMessage("Identical content", chatId, senderId, bobPublicBase64);
+  const enc2 = await encryptTextMessage("Identical content", chatId, senderId, bobPublicBase64);
+  const env1 = unpackE2EEMessage(enc1);
+  const env2 = unpackE2EEMessage(enc2);
+
+  if (env1.iv === env2.iv) throw new Error("Repeated IV across separate encryptions!");
+  if (env1.ct === env2.ct) throw new Error("Identical ciphertext generated across separate encryptions!");
+  console.log("      ✓ Each message receives distinct 12-byte IV and unique ciphertext.");
+
+  // 4. Cryptographic Authentication & Tamper Rejection Checks
+  console.log("   D. Cryptographic tamper & AAD mismatch rejection");
+
+  // Bob as recipient
+  mockStore.set("chirp_identity_keypair", {
+    id: "chirp_identity_keypair",
+    publicKey: bobPair.publicKey,
+    privateKey: bobPair.privateKey,
+  });
+  clearConversationKeyCache();
+
+  // D1. Tampered ciphertext rejection
+  let tamperedCtRejected = false;
+  try {
+    const rawEnv = await encryptTextMessage("Authentic message", chatId, senderId, bobPublicBase64);
+    const envObj = unpackE2EEMessage(rawEnv);
+    const ctBytes = new Uint8Array(Buffer.from(envObj.ct, "base64"));
+    ctBytes[0] ^= 0x01; // flip 1 bit
+    envObj.ct = Buffer.from(ctBytes).toString("base64");
+    await decryptTextMessage(packE2EEMessage(envObj), chatId, senderId, alicePublicBase64);
+  } catch {
+    tamperedCtRejected = true;
+  }
+  if (!tamperedCtRejected) throw new Error("Tampered ciphertext was not rejected!");
+
+  // D2. Tampered IV rejection
+  let tamperedIvRejected = false;
+  try {
+    const rawEnv = await encryptTextMessage("Authentic message", chatId, senderId, bobPublicBase64);
+    const envObj = unpackE2EEMessage(rawEnv);
+    const ivBytes = new Uint8Array(Buffer.from(envObj.iv, "base64"));
+    ivBytes[0] ^= 0x01;
+    envObj.iv = Buffer.from(ivBytes).toString("base64");
+    await decryptTextMessage(packE2EEMessage(envObj), chatId, senderId, alicePublicBase64);
+  } catch {
+    tamperedIvRejected = true;
+  }
+  if (!tamperedIvRejected) throw new Error("Tampered IV was not rejected!");
+
+  // D3. Wrong chatId (AAD mismatch) rejection
+  let wrongChatIdRejected = false;
+  try {
+    const rawEnv = await encryptTextMessage("Authentic message", chatId, senderId, bobPublicBase64);
+    await decryptTextMessage(rawEnv, "wrong-chat-id", senderId, alicePublicBase64);
+  } catch {
+    wrongChatIdRejected = true;
+  }
+  if (!wrongChatIdRejected) throw new Error("Wrong chatId (AAD mismatch) was not rejected!");
+
+  // D4. Wrong senderId (AAD mismatch) rejection
+  let wrongSenderIdRejected = false;
+  try {
+    const rawEnv = await encryptTextMessage("Authentic message", chatId, senderId, bobPublicBase64);
+    await decryptTextMessage(rawEnv, chatId, "eve-sender-id", alicePublicBase64);
+  } catch {
+    wrongSenderIdRejected = true;
+  }
+  if (!wrongSenderIdRejected) throw new Error("Wrong senderId (AAD mismatch) was not rejected!");
+
+  // D5. Wrong peer public key rejection
+  const charliePair = await generateECDHKeyPair(true);
+  const charliePublicBase64 = await exportPublicKey(charliePair.publicKey);
+  let wrongPeerKeyRejected = false;
+  try {
+    const rawEnv = await encryptTextMessage("Authentic message", chatId, senderId, bobPublicBase64);
+    await decryptTextMessage(rawEnv, chatId, senderId, charliePublicBase64);
+  } catch {
+    wrongPeerKeyRejected = true;
+  }
+  if (!wrongPeerKeyRejected) throw new Error("Wrong peer public key was not rejected!");
+
+  console.log("      ✓ Ciphertext tampering, IV tampering, AAD mismatch, and peer mismatch all rejected.");
+
+  console.log("\nAll Phase 3 Step 1 cryptographic tests passed successfully!");
 }
 
 runAllTests().catch((err) => {
   console.error("\nTest failure:", err);
   process.exit(1);
 });
+

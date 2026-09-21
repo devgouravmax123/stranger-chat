@@ -669,3 +669,263 @@ export async function runCryptoSelfTest(): Promise<{
     };
   }
 }
+
+// ==========================================
+// PHASE 3 STEP 1: E2EE MESSAGE PROTOCOL & ENVELOPE
+// ==========================================
+
+export type E2EEMessageEnvelope = {
+  e2ee: true;
+  v: 1;
+  iv: string; // Base64 representation of exactly 12-byte IV
+  ct: string; // Base64 ciphertext + GCM auth tag
+};
+
+/**
+ * Strict type-guard to validate an untrusted value as a genuine E2EEMessageEnvelope.
+ *
+ * Requirements:
+ * - value is a non-null object
+ * - value.e2ee is boolean true
+ * - value.v is number 1
+ * - value.iv is valid Base64 decoding to exactly 12 bytes
+ * - value.ct is valid Base64 non-empty string
+ */
+export function isE2EEMessageEnvelope(value: unknown): value is E2EEMessageEnvelope {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+
+  if (candidate.e2ee !== true || candidate.v !== 1) {
+    return false;
+  }
+
+  if (typeof candidate.iv !== "string" || typeof candidate.ct !== "string") {
+    return false;
+  }
+
+  if (candidate.ct.length === 0) {
+    return false;
+  }
+
+  // Validate IV Base64 format and length
+  const base64Regex = /^[A-Za-z0-9+/]+={0,2}$/;
+  if (!base64Regex.test(candidate.iv) || !base64Regex.test(candidate.ct)) {
+    return false;
+  }
+
+  try {
+    const ivBytes = new Uint8Array(base64ToArrayBuffer(candidate.iv));
+    if (ivBytes.byteLength !== 12) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+
+  // Ensure Base64 decoding of ct succeeds
+  try {
+    const ctBytes = new Uint8Array(base64ToArrayBuffer(candidate.ct));
+    if (ctBytes.byteLength === 0) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Serializes a validated E2EEMessageEnvelope into a compact, deterministic JSON string.
+ */
+export function packE2EEMessage(envelope: E2EEMessageEnvelope): string {
+  if (!isE2EEMessageEnvelope(envelope)) {
+    throw new Error("[E2EE] Invalid envelope cannot be packed.");
+  }
+  return JSON.stringify({
+    e2ee: envelope.e2ee,
+    v: envelope.v,
+    iv: envelope.iv,
+    ct: envelope.ct,
+  });
+}
+
+/**
+ * Deserializes and strictly validates a raw JSON string into an E2EEMessageEnvelope.
+ * Never throws on untrusted/malformed inputs; returns null on any validation failure.
+ */
+export function unpackE2EEMessage(raw: string): E2EEMessageEnvelope | null {
+  if (typeof raw !== "string" || !raw.trim().startsWith("{")) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (isE2EEMessageEnvelope(parsed)) {
+      return parsed;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// ==========================================
+// IN-MEMORY CONVERSATION KEY CACHE
+// ==========================================
+
+/**
+ * Ephemeral in-memory cache for derived pairwise conversation keys.
+ *
+ * Security guarantees:
+ * - Cache key binds BOTH conversation ID and peer public key.
+ * - Never persisted to IndexedDB, localStorage, or sessionStorage.
+ * - Never logged or transmitted over network.
+ * - Can be wiped at any time via clearConversationKeyCache().
+ */
+const conversationKeyCache = new Map<string, CryptoKey>();
+
+export function clearConversationKeyCache(): void {
+  conversationKeyCache.clear();
+}
+
+/**
+ * Derives a pairwise AES-256-GCM symmetric key for a specific conversation.
+ *
+ * HKDF Info Context:
+ * "chirp:e2ee:v1:conversation:<chatId>"
+ *
+ * Binds the derived key strictly to the specific chat/conversation identifier,
+ * preventing cross-conversation ciphertext transplantation.
+ */
+export async function getConversationSharedKey(
+  chatId: string,
+  peerPublicKeyBase64: string
+): Promise<CryptoKey> {
+  if (!chatId || typeof chatId !== "string") {
+    throw new Error("[E2EE] Invalid chatId provided for key derivation.");
+  }
+  if (!peerPublicKeyBase64 || typeof peerPublicKeyBase64 !== "string") {
+    throw new Error("[E2EE] Invalid peerPublicKeyBase64 provided for key derivation.");
+  }
+
+  const normalizedPeerKey = peerPublicKeyBase64.trim();
+  const cacheKey = `${chatId}::${normalizedPeerKey}`;
+
+  const cachedKey = conversationKeyCache.get(cacheKey);
+  if (cachedKey) {
+    return cachedKey;
+  }
+
+  // 1. Retrieve local identity keypair from IndexedDB
+  const localKeyPair = await getStoredIdentityKeyPair();
+  if (!localKeyPair || !localKeyPair.privateKey) {
+    throw new Error(
+      "[E2EE] Local identity keypair is missing. Cannot derive conversation key."
+    );
+  }
+
+  // 2. Import peer public key
+  const peerPublicKey = await importPublicKey(normalizedPeerKey);
+
+  // 3. Derive domain-separated shared AES key
+  const info = `chirp:e2ee:v1:conversation:${chatId}`;
+  const derivedKey = await deriveSharedKey(localKeyPair.privateKey, peerPublicKey, info);
+
+  // 4. Cache in memory
+  conversationKeyCache.set(cacheKey, derivedKey);
+  return derivedKey;
+}
+
+// ==========================================
+// HIGH-LEVEL ENCRYPT / DECRYPT HELPERS
+// ==========================================
+
+/**
+ * Constructs the standard AAD (Additional Authenticated Data) for a message.
+ *
+ * Format: "chirp:e2ee:v1:message:<chatId>:<senderId>"
+ */
+export function buildMessageAAD(chatId: string, senderId: string): string {
+  return `chirp:e2ee:v1:message:${chatId}:${senderId}`;
+}
+
+/**
+ * Encrypts a text message using the derived conversation key, a fresh 12-byte IV,
+ * and authenticated AAD binding to chatId and senderId.
+ *
+ * Returns the serialized E2EEMessageEnvelope JSON string.
+ */
+export async function encryptTextMessage(
+  plaintext: string,
+  chatId: string,
+  senderId: string,
+  peerPublicKeyBase64: string
+): Promise<string> {
+  if (typeof plaintext !== "string") {
+    throw new Error("[E2EE] Plaintext must be a string.");
+  }
+  if (!chatId || !senderId) {
+    throw new Error("[E2EE] Both chatId and senderId are required for AAD binding.");
+  }
+
+  // 1. Obtain conversation AES key
+  const conversationKey = await getConversationSharedKey(chatId, peerPublicKeyBase64);
+
+  // 2. Construct AAD
+  const aad = buildMessageAAD(chatId, senderId);
+
+  // 3. Encrypt plaintext with AES-256-GCM (generates fresh random 12-byte IV)
+  const encrypted = await encryptMessage(plaintext, conversationKey, aad);
+
+  // 4. Construct typed envelope
+  const envelope: E2EEMessageEnvelope = {
+    e2ee: true,
+    v: 1,
+    iv: encrypted.iv,
+    ct: encrypted.ciphertext,
+  };
+
+  // 5. Return compact serialized envelope
+  return packE2EEMessage(envelope);
+}
+
+/**
+ * Decrypts a serialized E2EEMessageEnvelope string using the derived conversation key
+ * and verifies authentication with the exact expected AAD.
+ *
+ * Throws a cryptographic error if authentication fails, envelope is invalid,
+ * or if ciphertext/IV/AAD were tampered with. Never returns ciphertext as fallback.
+ */
+export async function decryptTextMessage(
+  rawEnvelope: string,
+  chatId: string,
+  senderId: string,
+  peerPublicKeyBase64: string
+): Promise<string> {
+  // 1. Parse and strictly validate envelope
+  const envelope = unpackE2EEMessage(rawEnvelope);
+  if (!envelope) {
+    throw new Error("[E2EE] Invalid or malformed E2EE message envelope.");
+  }
+
+  // 2. Obtain conversation AES key
+  const conversationKey = await getConversationSharedKey(chatId, peerPublicKeyBase64);
+
+  // 3. Construct exact AAD
+  const aad = buildMessageAAD(chatId, senderId);
+
+  // 4. Decrypt via AES-GCM (Web Crypto rejects tampered ciphertext or wrong AAD)
+  return await decryptMessage(
+    {
+      ciphertext: envelope.ct,
+      iv: envelope.iv,
+    },
+    conversationKey,
+    aad
+  );
+}
+

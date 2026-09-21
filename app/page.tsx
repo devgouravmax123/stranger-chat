@@ -24,7 +24,16 @@ import { useVideoCall } from "@/hooks/useVideoCall";
 import { blobToDataUrl } from "@/lib/audioConverter";
 import { CANONICAL_INTERESTS, CANONICAL_GOALS } from "@/lib/interests";
 import { BACKEND_URL } from "@/lib/api-config";
-import { clearIdentityKeys, syncIdentityKeyLifecycle } from "@/lib/crypto";
+import {
+  clearIdentityKeys,
+  syncIdentityKeyLifecycle,
+  encryptTextMessage,
+  decryptTextMessage,
+  isE2EEMessageEnvelope,
+  unpackE2EEMessage,
+  clearConversationKeyCache,
+  E2EEMessageEnvelope,
+} from "@/lib/crypto";
 
 // ==========================================
 // NAVIGATION & VIEW TYPES
@@ -47,9 +56,16 @@ type MatchPreferences = {
 
 type MatchedData = {
   roomId: string;
+  chatId: string;
   userId: string;
   strangerUserId: string;
   score: number;
+  strangerProfile?: {
+    id?: string;
+    username?: string | null;
+    avatar?: string | null;
+    publicKey?: string | null;
+  } | null;
 };
 
 type UserReadyData = {
@@ -68,6 +84,7 @@ type Friend = {
   avatar: string | null;
   lastSeenAt?: string | null;
   isOnline?: boolean;
+  publicKey?: string | null;
 };
 
 type Friendship = {
@@ -213,6 +230,7 @@ export default function Home() {
   const noLiveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const [strangerRoomId, setStrangerRoomId] = useState<string | null>(null);
+  const [strangerChatId, setStrangerChatId] = useState<string | null>(null);
   const [strangerUserId, setStrangerUserId] = useState<string | null>(null);
   const [matchScore, setMatchScore] = useState<number | null>(null);
   const [strangerStatus, setStrangerStatus] = useState<
@@ -270,6 +288,13 @@ export default function Home() {
 
   const strangerRoomIdRef = useRef<string | null>(null);
   strangerRoomIdRef.current = strangerRoomId;
+
+  const strangerChatIdRef = useRef<string | null>(null);
+  strangerChatIdRef.current = strangerChatId;
+
+  const [strangerPublicKey, setStrangerPublicKey] = useState<string | null>(null);
+  const strangerPublicKeyRef = useRef<string | null>(null);
+  strangerPublicKeyRef.current = strangerPublicKey;
 
   // ==========================================
   // NOTIFICATION BANNER
@@ -592,7 +617,12 @@ export default function Home() {
       setUserId(data.userId);
       userIdRef.current = data.userId;
       setStrangerRoomId(data.roomId);
+      setStrangerChatId(data.chatId);
+      strangerChatIdRef.current = data.chatId;
       setStrangerUserId(data.strangerUserId);
+      const peerKey = data.strangerProfile?.publicKey || null;
+      setStrangerPublicKey(peerKey);
+      strangerPublicKeyRef.current = peerKey;
       setMatchScore(data.score);
       setStrangerStatus("online");
       setStrangerTyping(false);
@@ -603,22 +633,92 @@ export default function Home() {
       navigateTo("stranger-chat");
     });
 
-    newSocket.on("chat_history", (data: { messages: any[]; userId: string }) => {
+    newSocket.on("chat_history", async (data: { messages: any[]; userId: string }) => {
       const currentUserId = userIdRef.current || data.userId;
+      const activeChatId = strangerChatIdRef.current;
+      const peerKey = strangerPublicKeyRef.current;
+
       if (Array.isArray(data?.messages)) {
-        const history: Message[] = data.messages.map((item: any) => ({
-          id: item.id,
-          text: item.text || "",
-          sender: item.sender || (item.senderId === currentUserId ? "me" : "stranger"),
-          timestamp: typeof item.createdAt === "string" ? new Date(item.createdAt).getTime() : (item.createdAt ? new Date(item.createdAt).getTime() : (item.timestamp || Date.now())),
-          type: item.type || "text",
-          audioUrl: item.audioUrl,
-          imageUrl: item.imageUrl,
-          status: item.status || "delivered",
-          replyTo: item.replyTo,
-          deletedAt: item.deletedAt,
-          reactions: item.reactions || [],
-        }));
+        const history: Message[] = await Promise.all(
+          data.messages.map(async (item: any) => {
+            let textContent = item.text || "";
+
+            // Check if message content is an E2EE envelope
+            if (item.envelope) {
+              if (activeChatId && peerKey) {
+                try {
+                  const envStr = JSON.stringify(item.envelope);
+                  textContent = await decryptTextMessage(
+                    envStr,
+                    activeChatId,
+                    item.senderId,
+                    peerKey
+                  );
+                } catch (decErr) {
+                  console.warn("[E2EE] Failed to decrypt stranger history message:", decErr);
+                  textContent = "Unable to decrypt this message";
+                }
+              } else {
+                textContent = "Unable to decrypt this message";
+              }
+            } else if (typeof item.content === "string") {
+              const unpacked = unpackE2EEMessage(item.content);
+              if (unpacked) {
+                if (activeChatId && peerKey) {
+                  try {
+                    textContent = await decryptTextMessage(
+                      item.content,
+                      activeChatId,
+                      item.senderId,
+                      peerKey
+                    );
+                  } catch (decErr) {
+                    console.warn("[E2EE] Failed to decrypt stranger history content:", decErr);
+                    textContent = "Unable to decrypt this message";
+                  }
+                } else {
+                  textContent = "Unable to decrypt this message";
+                }
+              }
+            }
+
+            // Also check replyTo preview if present
+            let replyToPayload = item.replyTo;
+            if (replyToPayload) {
+              if (replyToPayload.content) {
+                const unpackedReply = unpackE2EEMessage(replyToPayload.content);
+                if (unpackedReply && activeChatId && peerKey) {
+                  try {
+                    const decryptedReply = await decryptTextMessage(
+                      replyToPayload.content,
+                      activeChatId,
+                      replyToPayload.senderId || (replyToPayload.sender === "me" ? currentUserId : data.userId),
+                      peerKey
+                    );
+                    replyToPayload = { ...replyToPayload, text: decryptedReply };
+                  } catch {
+                    replyToPayload = { ...replyToPayload, text: "Encrypted reply" };
+                  }
+                }
+              }
+            }
+
+            return {
+              id: item.id,
+              text: textContent,
+              sender: item.sender || (item.senderId === currentUserId ? "me" : "stranger"),
+              timestamp: typeof item.createdAt === "string" ? new Date(item.createdAt).getTime() : (item.createdAt ? new Date(item.createdAt).getTime() : (item.timestamp || Date.now())),
+              type: item.type || "text",
+              audioUrl: item.audioUrl,
+              imageUrl: item.imageUrl,
+              status: item.status || "delivered",
+              replyTo: replyToPayload,
+              deletedAt: item.deletedAt,
+              reactions: item.reactions || [],
+            };
+          })
+        );
+
         setMessages(history);
 
         const unreadStranger = history
@@ -733,10 +833,11 @@ export default function Home() {
 
     newSocket.on(
       "receive_message",
-      (data: {
+      async (data: {
         id: string;
         clientId?: string;
-        text: string;
+        text?: string;
+        envelope?: E2EEMessageEnvelope;
         senderId: string;
         timestamp: number;
         type?: "text" | "audio" | "image";
@@ -745,28 +846,88 @@ export default function Home() {
         status?: "sending" | "sent" | "delivered" | "seen";
         replyTo?: {
           id: string;
-          text: string;
+          content?: string;
+          text?: string;
           type?: "text" | "audio" | "image";
         } | null;
       }) => {
         const isAudio = data.type === "audio";
         const isImage = data.type === "image";
 
+        let displayText = data.text || "";
+
+        // Handle E2EE envelope decryption
+        if (data.envelope && isE2EEMessageEnvelope(data.envelope)) {
+          const activeChatId = strangerChatIdRef.current;
+          const peerKey = strangerPublicKeyRef.current;
+
+          if (activeChatId && peerKey) {
+            try {
+              const envStr = JSON.stringify(data.envelope);
+              displayText = await decryptTextMessage(
+                envStr,
+                activeChatId,
+                data.senderId,
+                peerKey
+              );
+            } catch (decErr) {
+              console.warn("[E2EE] Failed to decrypt stranger message:", decErr);
+              displayText = "Unable to decrypt this message";
+            }
+          } else {
+            displayText = "Unable to decrypt this message";
+          }
+        }
+
+        // Handle replyTo text if envelope
+        let processedReplyTo: { id: string; text: string; type?: "text" | "audio" | "image" } | null = null;
+        if (data.replyTo) {
+          let replyText = data.replyTo.text || "";
+          if (data.replyTo.content) {
+            const unpackedReply = unpackE2EEMessage(data.replyTo.content);
+            if (unpackedReply) {
+              const activeChatId = strangerChatIdRef.current;
+              const peerKey = strangerPublicKeyRef.current;
+              if (activeChatId && peerKey) {
+                try {
+                  replyText = await decryptTextMessage(
+                    data.replyTo.content,
+                    activeChatId,
+                    data.senderId,
+                    peerKey
+                  );
+                } catch {
+                  replyText = "Encrypted reply";
+                }
+              } else {
+                replyText = "Encrypted reply";
+              }
+            } else {
+              replyText = data.replyTo.content;
+            }
+          }
+          processedReplyTo = {
+            id: data.replyTo.id,
+            text: replyText,
+            type: data.replyTo.type,
+          };
+        }
+
         const newMsg: Message = {
           id: data.id,
           clientId: data.clientId,
           text: isImage
-            ? data.text || "Photo message"
+            ? displayText || "Photo message"
             : isAudio
             ? "Voice message"
-            : data.text,
+            : displayText,
           sender: data.senderId === userIdRef.current ? "me" : "stranger",
           timestamp: data.timestamp,
           type: data.type || "text",
           audioUrl: data.audioUrl,
           imageUrl: data.imageUrl,
           status: "delivered",
-          replyTo: data.replyTo,
+          replyTo: processedReplyTo,
         };
 
         setMessages((prev) => [...prev, newMsg]);
@@ -973,54 +1134,172 @@ export default function Home() {
     // FRIEND ROOMS & PRIVATE MESSAGING
     // ==========================================
 
-    newSocket.on("friend_room_opened", (data: any) => {
+    newSocket.on("friend_room_opened", async (data: any) => {
       setFriendRoomId(data.roomId);
       if (data.chatId) {
         setFriendChatId(data.chatId);
       }
       const currentUserId = userIdRef.current;
+      const activeChatId = data.chatId || friendChatIdRef.current;
+      let peerKey = selectedFriendRef.current?.publicKey || null;
 
-      const history: Message[] = (data.messages || []).map((item: any) => {
-        // Handle pre-formatted message object (from getFormattedMessages)
-        if (item.type || item.text) {
-          return {
-            id: item.id,
-            text: item.text || "",
-            sender: item.sender || (item.senderId === currentUserId ? "me" : "stranger"),
-            timestamp: typeof item.createdAt === "string" ? new Date(item.createdAt).getTime() : (item.createdAt ? new Date(item.createdAt).getTime() : (item.timestamp || Date.now())),
-            type: item.type || "text",
-            audioUrl: item.audioUrl,
-            imageUrl: item.imageUrl,
-            status: item.status || "delivered",
-            replyTo: item.replyTo,
-            deletedAt: item.deletedAt,
-            reactions: item.reactions || [],
-          };
-        }
+      // Fallback: if peerKey is missing on selectedFriend, fetch friend profile
+      if (!peerKey && selectedFriendRef.current?.id) {
+        try {
+          const pRes = await fetch(`${BACKEND_URL}/users/${selectedFriendRef.current.id}/profile`);
+          if (pRes.ok) {
+            const pData = await pRes.json();
+            if (pData?.publicKey) {
+              peerKey = pData.publicKey;
+              setSelectedFriend((prev) => (prev ? { ...prev, publicKey: pData.publicKey } : prev));
+            }
+          }
+        } catch {}
+      }
 
-        // Handle raw prisma Message entity
-        const rawContent = typeof item.content === "string" ? item.content : "";
-        const isAudio = rawContent.startsWith("audio:");
-        const isImage = rawContent.startsWith("image:");
+      const history: Message[] = await Promise.all(
+        (data.messages || []).map(async (item: any) => {
+          // Handle pre-formatted message object (from getFormattedMessages)
+          if (item.type || item.text || item.envelope) {
+            let textContent = item.text || "";
 
-        return {
-          id: item.id,
-          text: isImage
+            if (item.envelope) {
+              if (activeChatId && peerKey) {
+                try {
+                  const envStr = JSON.stringify(item.envelope);
+                  textContent = await decryptTextMessage(
+                    envStr,
+                    activeChatId,
+                    item.senderId,
+                    peerKey
+                  );
+                } catch (decErr) {
+                  console.warn("[E2EE] Failed to decrypt friend room history message:", decErr);
+                  textContent = "Unable to decrypt this message";
+                }
+              } else {
+                textContent = "Unable to decrypt this message";
+              }
+            } else if (typeof item.content === "string") {
+              const unpacked = unpackE2EEMessage(item.content);
+              if (unpacked) {
+                if (activeChatId && peerKey) {
+                  try {
+                    textContent = await decryptTextMessage(
+                      item.content,
+                      activeChatId,
+                      item.senderId,
+                      peerKey
+                    );
+                  } catch (decErr) {
+                    console.warn("[E2EE] Failed to decrypt friend room history content:", decErr);
+                    textContent = "Unable to decrypt this message";
+                  }
+                } else {
+                  textContent = "Unable to decrypt this message";
+                }
+              }
+            }
+
+            // Also check replyTo preview if present
+            let replyToPayload = item.replyTo;
+            if (replyToPayload) {
+              if (replyToPayload.content) {
+                const unpackedReply = unpackE2EEMessage(replyToPayload.content);
+                if (unpackedReply && activeChatId && peerKey) {
+                  try {
+                    const decryptedReply = await decryptTextMessage(
+                      replyToPayload.content,
+                      activeChatId,
+                      replyToPayload.senderId || (replyToPayload.sender === "me" ? currentUserId : selectedFriendRef.current?.id),
+                      peerKey
+                    );
+                    replyToPayload = { ...replyToPayload, text: decryptedReply };
+                  } catch {
+                    replyToPayload = { ...replyToPayload, text: "Encrypted reply" };
+                  }
+                }
+              }
+            }
+
+            return {
+              id: item.id,
+              text: textContent,
+              sender: item.sender || (item.senderId === currentUserId ? "me" : "stranger"),
+              timestamp: typeof item.createdAt === "string" ? new Date(item.createdAt).getTime() : (item.createdAt ? new Date(item.createdAt).getTime() : (item.timestamp || Date.now())),
+              type: item.type || "text",
+              audioUrl: item.audioUrl,
+              imageUrl: item.imageUrl,
+              status: item.status || "delivered",
+              replyTo: replyToPayload,
+              deletedAt: item.deletedAt,
+              reactions: item.reactions || [],
+            };
+          }
+
+          // Handle raw prisma Message entity
+          const rawContent = typeof item.content === "string" ? item.content : "";
+          const isAudio = rawContent.startsWith("audio:");
+          const isImage = rawContent.startsWith("image:");
+          let textContent = isImage
             ? "Photo message"
             : isAudio
             ? "Voice message"
-            : rawContent,
-          sender: item.senderId === currentUserId ? "me" : "stranger",
-          timestamp: item.createdAt ? new Date(item.createdAt).getTime() : Date.now(),
-          type: isImage ? "image" : isAudio ? "audio" : "text",
-          audioUrl: isAudio ? rawContent.replace("audio:", "") : undefined,
-          imageUrl: isImage ? rawContent.replace("image:", "") : undefined,
-          status: item.status || "delivered",
-          replyTo: item.replyTo,
-          deletedAt: item.deletedAt,
-          reactions: item.reactions || [],
-        };
-      });
+            : rawContent;
+
+          const unpacked = !isAudio && !isImage ? unpackE2EEMessage(rawContent) : null;
+          if (unpacked) {
+            if (activeChatId && peerKey) {
+              try {
+                textContent = await decryptTextMessage(
+                  rawContent,
+                  activeChatId,
+                  item.senderId,
+                  peerKey
+                );
+              } catch (decErr) {
+                console.warn("[E2EE] Failed to decrypt raw friend room message:", decErr);
+                textContent = "Unable to decrypt this message";
+              }
+            } else {
+              textContent = "Unable to decrypt this message";
+            }
+          }
+
+          // Check raw entity replyTo
+          let replyToPayload = item.replyTo;
+          if (replyToPayload?.content) {
+            const unpackedReply = unpackE2EEMessage(replyToPayload.content);
+            if (unpackedReply && activeChatId && peerKey) {
+              try {
+                const decryptedReply = await decryptTextMessage(
+                  replyToPayload.content,
+                  activeChatId,
+                  replyToPayload.senderId || (replyToPayload.sender === "me" ? currentUserId : selectedFriendRef.current?.id),
+                  peerKey
+                );
+                replyToPayload = { ...replyToPayload, text: decryptedReply };
+              } catch {
+                replyToPayload = { ...replyToPayload, text: "Encrypted reply" };
+              }
+            }
+          }
+
+          return {
+            id: item.id,
+            text: textContent,
+            sender: item.senderId === currentUserId ? "me" : "stranger",
+            timestamp: item.createdAt ? new Date(item.createdAt).getTime() : Date.now(),
+            type: isImage ? "image" : isAudio ? "audio" : "text",
+            audioUrl: isAudio ? rawContent.replace("audio:", "") : undefined,
+            imageUrl: isImage ? rawContent.replace("image:", "") : undefined,
+            status: item.status || "delivered",
+            replyTo: replyToPayload,
+            deletedAt: item.deletedAt,
+            reactions: item.reactions || [],
+          };
+        })
+      );
 
       setFriendMessages(history);
       setFriendChatLoading(false);
@@ -1039,10 +1318,11 @@ export default function Home() {
       }
     });
 
-    newSocket.on("receive_friend_message", (data: {
+    newSocket.on("receive_friend_message", async (data: {
       id: string;
       clientId?: string;
-      text: string;
+      text?: string;
+      envelope?: E2EEMessageEnvelope;
       senderId: string;
       timestamp: number;
       type?: "text" | "audio" | "image";
@@ -1050,28 +1330,102 @@ export default function Home() {
       imageUrl?: string;
       replyTo?: {
         id: string;
-        text: string;
+        content?: string;
+        text?: string;
         type?: "text" | "audio" | "image";
       } | null;
     }) => {
       const isAudio = data.type === "audio";
       const isImage = data.type === "image";
 
+      let displayText = data.text || "";
+
+      // Handle E2EE envelope decryption
+      if (data.envelope && isE2EEMessageEnvelope(data.envelope)) {
+        const activeChatId = friendChatIdRef.current;
+        let peerKey = selectedFriendRef.current?.publicKey || null;
+
+        // Fallback: fetch public key if not yet cached
+        if (!peerKey && data.senderId) {
+          try {
+            const pRes = await fetch(`${BACKEND_URL}/users/${data.senderId}/profile`);
+            if (pRes.ok) {
+              const pData = await pRes.json();
+              if (pData?.publicKey) {
+                peerKey = pData.publicKey;
+                setSelectedFriend((prev) => (prev && prev.id === data.senderId ? { ...prev, publicKey: pData.publicKey } : prev));
+              }
+            }
+          } catch {}
+        }
+
+        if (activeChatId && peerKey) {
+          try {
+            const envStr = JSON.stringify(data.envelope);
+            displayText = await decryptTextMessage(
+              envStr,
+              activeChatId,
+              data.senderId,
+              peerKey
+            );
+          } catch (decErr) {
+            console.warn("[E2EE] Failed to decrypt friend message:", decErr);
+            displayText = "Unable to decrypt this message";
+          }
+        } else {
+          displayText = "Unable to decrypt this message";
+        }
+      }
+
+      // Handle replyTo text if envelope
+      let processedReplyTo: { id: string; text: string; type?: "text" | "audio" | "image" } | null = null;
+      if (data.replyTo) {
+        let replyText = data.replyTo.text || "";
+        if (data.replyTo.content) {
+          const unpackedReply = unpackE2EEMessage(data.replyTo.content);
+          if (unpackedReply) {
+            const activeChatId = friendChatIdRef.current;
+            const peerKey = selectedFriendRef.current?.publicKey || null;
+            if (activeChatId && peerKey) {
+              try {
+                replyText = await decryptTextMessage(
+                  data.replyTo.content,
+                  activeChatId,
+                  data.senderId,
+                  peerKey
+                );
+              } catch {
+                replyText = "Encrypted reply";
+              }
+            } else {
+              replyText = "Encrypted reply";
+            }
+          } else {
+            replyText = data.replyTo.content;
+          }
+        }
+        processedReplyTo = {
+          id: data.replyTo.id,
+          text: replyText,
+          type: data.replyTo.type,
+        };
+      }
+
       const newMsg: Message = {
         id: data.id,
         clientId: data.clientId,
         text: isImage
-          ? data.text || "Photo message"
+          ? displayText || "Photo message"
           : isAudio
           ? "Voice message"
-          : data.text,
+          : displayText,
         sender: data.senderId === userIdRef.current ? "me" : "stranger",
         timestamp: data.timestamp,
         type: data.type || "text",
         audioUrl: data.audioUrl,
         imageUrl: data.imageUrl,
         status: "delivered",
-        replyTo: data.replyTo,
+        replyTo: processedReplyTo,
       };
 
       setFriendMessages((prev) => {
@@ -1355,11 +1709,16 @@ export default function Home() {
     if (!socket) return;
 
     clearMatchingTimers();
+    clearConversationKeyCache();
+    setStrangerPublicKey(null);
+    strangerPublicKeyRef.current = null;
     setMessages([]);
     setReplyingTo(null);
     setStrangerTyping(false);
     setMatchScore(null);
     setStrangerRoomId(null);
+    setStrangerChatId(null);
+    strangerChatIdRef.current = null;
     setStrangerUserId(null);
     setFriendRequestSent(false);
     setFriendRequestMessage("");
@@ -1391,6 +1750,9 @@ export default function Home() {
     setIsVideoChatOpen(false);
     setUnreadVideoChatCount(0);
     clearMatchingTimers();
+    clearConversationKeyCache();
+    setStrangerPublicKey(null);
+    strangerPublicKeyRef.current = null;
     if (socket) {
       socket.emit("end_chat");
     }
@@ -1399,6 +1761,8 @@ export default function Home() {
     setStrangerTyping(false);
     setMatchScore(null);
     setStrangerRoomId(null);
+    setStrangerChatId(null);
+    strangerChatIdRef.current = null;
     setStrangerUserId(null);
     setFriendRequestSent(false);
     setFriendRequestMessage("");
@@ -1431,12 +1795,23 @@ export default function Home() {
   // FEATURE 4: SENDING MESSAGES & CLIENT IDS
   // ==========================================
 
-  const sendStrangerMessage = () => {
+  const sendStrangerMessage = async () => {
     if (!socket || message.trim() === "") return;
+
+    const activeChatId = strangerChatIdRef.current;
+    const peerKey = strangerPublicKeyRef.current;
+    const currentUserId = userIdRef.current;
+
+    if (!activeChatId || !peerKey || !currentUserId) {
+      showNotification("Cannot send message: waiting for secure key exchange.");
+      return;
+    }
 
     const clientId = `client-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const text = message.trim();
+    const targetReplyingTo = replyingTo;
 
+    // Optimistic UI display
     const optimisticMsg: Message = {
       id: clientId,
       clientId,
@@ -1445,11 +1820,11 @@ export default function Home() {
       timestamp: Date.now(),
       type: "text",
       status: "sending",
-      replyTo: replyingTo
+      replyTo: targetReplyingTo
         ? {
-            id: replyingTo.id,
-            text: replyingTo.text,
-            type: replyingTo.type,
+            id: targetReplyingTo.id,
+            text: targetReplyingTo.text,
+            type: targetReplyingTo.type,
           }
         : null,
     };
@@ -1458,12 +1833,32 @@ export default function Home() {
     setMessage("");
     setReplyingTo(null);
 
-    socket.emit("send_message", {
-      text,
-      clientId,
-      replyToId: replyingTo?.id,
-    });
-    socket.emit("stop_typing");
+    try {
+      // Encrypt text message locally in browser - NEVER send plaintext
+      const envelopeStr = await encryptTextMessage(
+        text,
+        activeChatId,
+        currentUserId,
+        peerKey
+      );
+      const envelope = unpackE2EEMessage(envelopeStr);
+      if (!envelope) {
+        throw new Error("Envelope packing failed");
+      }
+
+      // Transmit ONLY envelope to Socket.IO. Never send 'text' alongside envelope!
+      socket.emit("send_message", {
+        envelope,
+        clientId,
+        replyToId: targetReplyingTo?.id,
+      });
+      socket.emit("stop_typing");
+    } catch (encErr) {
+      console.error("[E2EE] Failed to encrypt stranger message:", encErr);
+      // Revert optimistic message and show non-sensitive notification
+      setMessages((prev) => prev.filter((m) => m.clientId !== clientId));
+      showNotification("Message encryption failed. Message was not sent.");
+    }
   };
 
   const sendStrangerVoice = async (audioBlob: Blob) => {
@@ -1857,11 +2252,14 @@ export default function Home() {
     friendVideoCall.teardownCall();
     setIsFriendVideoChatOpen(false);
     setUnreadFriendVideoChatCount(0);
+    clearConversationKeyCache();
     if (socket && friendRoomId) {
       socket.emit("leave_friend_room", { roomId: friendRoomId });
     }
     setSelectedFriend(null);
     setFriendRoomId(null);
+    setFriendChatId(null);
+    friendChatIdRef.current = null;
     setFriendMessages([]);
     setFriendMessage("");
     setFriendReplyingTo(null);
@@ -1914,19 +2312,84 @@ export default function Home() {
     setGlobalIncomingFriendCall(null);
   };
 
-  const sendFriendMessage = () => {
+  const sendFriendMessage = async () => {
     if (!socket || !userId || !friendRoomId || friendMessage.trim() === "") return;
+
+    const activeChatId = friendChatIdRef.current;
+    let peerKey = selectedFriendRef.current?.publicKey || null;
+
+    // Fallback: fetch public key if not yet cached on selectedFriend
+    if (!peerKey && selectedFriendRef.current?.id) {
+      try {
+        const pRes = await fetch(`${BACKEND_URL}/users/${selectedFriendRef.current.id}/profile`);
+        if (pRes.ok) {
+          const pData = await pRes.json();
+          if (pData?.publicKey) {
+            peerKey = pData.publicKey;
+            setSelectedFriend((prev) => (prev ? { ...prev, publicKey: pData.publicKey } : prev));
+          }
+        }
+      } catch {}
+    }
+
+    if (!activeChatId || !peerKey) {
+      showNotification("Cannot send message: peer encryption key not available.");
+      return;
+    }
+
+    const clientId = `client-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const text = friendMessage.trim();
+    const targetReplyingTo = friendReplyingTo;
+    const targetRoomId = friendRoomId;
 
-    socket.emit("send_friend_message", {
-      roomId: friendRoomId,
-      senderId: userId,
+    // Optimistic UI display
+    const optimisticMsg: Message = {
+      id: clientId,
+      clientId,
       text,
-      replyToId: friendReplyingTo?.id,
-    });
+      sender: "me",
+      timestamp: Date.now(),
+      type: "text",
+      status: "sending",
+      replyTo: targetReplyingTo
+        ? {
+            id: targetReplyingTo.id,
+            text: targetReplyingTo.text,
+            type: targetReplyingTo.type,
+          }
+        : null,
+    };
 
+    setFriendMessages((prev) => [...prev, optimisticMsg]);
     setFriendMessage("");
     setFriendReplyingTo(null);
+
+    try {
+      // Encrypt text message locally in browser - NEVER send plaintext
+      const envelopeStr = await encryptTextMessage(
+        text,
+        activeChatId,
+        userId,
+        peerKey
+      );
+      const envelope = unpackE2EEMessage(envelopeStr);
+      if (!envelope) {
+        throw new Error("Envelope packing failed");
+      }
+
+      // Transmit ONLY envelope to Socket.IO. Never send 'text' alongside envelope!
+      socket.emit("send_friend_message", {
+        roomId: targetRoomId,
+        senderId: userId,
+        envelope,
+        replyToId: targetReplyingTo?.id,
+      });
+    } catch (encErr) {
+      console.error("[E2EE] Failed to encrypt friend message:", encErr);
+      // Revert optimistic message and show non-sensitive notification
+      setFriendMessages((prev) => prev.filter((m) => m.clientId !== clientId));
+      showNotification("Message encryption failed. Message was not sent.");
+    }
   };
 
   const sendFriendVoice = async (audioBlob: Blob) => {
