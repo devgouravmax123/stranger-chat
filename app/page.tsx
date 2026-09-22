@@ -290,6 +290,8 @@ export default function Home() {
   // Stranger friend request state
   const [friendRequestSent, setFriendRequestSent] = useState(false);
   const [friendRequestMessage, setFriendRequestMessage] = useState("");
+  const [isSendingFriendRequest, setIsSendingFriendRequest] = useState(false);
+  const [isAlreadyFriend, setIsAlreadyFriend] = useState(false);
 
   // Safety & Modals
   const [isReportOpen, setIsReportOpen] = useState(false);
@@ -410,6 +412,9 @@ export default function Home() {
   const friendVideoCallTeardownRef = useRef(friendVideoCall.teardownCall);
   friendVideoCallTeardownRef.current = friendVideoCall.teardownCall;
 
+  const socketRef = useRef<Socket | null>(null);
+  socketRef.current = socket;
+
   const navigateTo = useCallback(
     (view: AppView, pushToHistory = true) => {
       // If leaving stranger chat or friend chat, safely tear down any active video calls
@@ -419,6 +424,34 @@ export default function Home() {
       if (view !== "friend-chat") {
         friendVideoCallTeardownRef.current?.();
       }
+
+      // If entering stranger-chat, mark any pending stranger notifications as read
+      if (view === "stranger-chat") {
+        setNotifications((prev) => {
+          const strangerNotifs = prev.filter((n) => n.type === "STRANGER_MESSAGE" && !n.isRead);
+          if (strangerNotifs.length > 0) {
+            setUnreadNotificationsCount((c) => Math.max(0, c - strangerNotifs.length));
+            return prev.map((n) => (n.type === "STRANGER_MESSAGE" ? { ...n, isRead: true } : n));
+          }
+          return prev;
+        });
+
+        if (socketRef.current && strangerRoomIdRef.current) {
+          setMessages((prev) => {
+            const unreadIds = prev
+              .filter((m) => m.sender === "stranger" && m.id && m.status !== "seen")
+              .map((m) => m.id as string);
+            if (unreadIds.length > 0 && socketRef.current) {
+              socketRef.current.emit("mark_seen", {
+                roomId: strangerRoomIdRef.current,
+                messageIds: unreadIds,
+              });
+            }
+            return prev;
+          });
+        }
+      }
+
       setCurrentView(view);
       if (typeof window !== "undefined" && pushToHistory) {
         window.history.pushState({ view }, "", `?view=${view}`);
@@ -432,16 +465,11 @@ export default function Home() {
       if (event.state && event.state.view) {
         const targetView = event.state.view as AppView;
         if (currentView === "stranger-chat" && targetView !== "stranger-chat") {
-          // Leaving stranger chat via browser back
+          // Leaving stranger chat view via browser back:
+          // Safely tear down any active video call, but PRESERVE active stranger room and chat session
           videoCall.teardownCall();
-          if (socket) {
-            socket.emit("end_chat");
-          }
-          setMessages([]);
-          setReplyingTo(null);
-          setStrangerTyping(false);
-          setStrangerUserId(null);
-          setWaiting(false);
+          setIsVideoChatOpen(false);
+          setUnreadVideoChatCount(0);
         } else if (currentView === "friend-chat" && targetView !== "friend-chat") {
           // Leaving friend chat via browser back
           friendVideoCall.teardownCall();
@@ -674,8 +702,44 @@ export default function Home() {
       setMatchScore(data.score);
       setStrangerStatus("online");
       setStrangerTyping(false);
-      setFriendRequestSent(false);
+
+      // Check if stranger is already a friend or has pending request
+      const isFriend = friends.some((f) => f.friend.id === data.strangerUserId);
+      const hasPending = friendRequests.some(
+        (r) => (r.senderId === data.strangerUserId || r.receiverId === data.strangerUserId) && r.status === "PENDING"
+      );
+      setIsAlreadyFriend(isFriend);
+      setFriendRequestSent(hasPending);
+      setIsSendingFriendRequest(false);
       setFriendRequestMessage("");
+
+      // Fetch fresh friends & requests in background
+      if (data.userId) {
+        fetch(`${BACKEND_URL}/friends/${data.userId}`)
+          .then((r) => (r.ok ? r.json() : null))
+          .then((freshFriends: Friendship[] | null) => {
+            if (freshFriends) {
+              setFriends(freshFriends);
+              if (freshFriends.some((f) => f.friend.id === data.strangerUserId)) {
+                setIsAlreadyFriend(true);
+              }
+            }
+          })
+          .catch(() => {});
+
+        fetch(`${BACKEND_URL}/friends/requests/${data.userId}`)
+          .then((r) => (r.ok ? r.json() : null))
+          .then((freshRequests: FriendRequest[] | null) => {
+            if (freshRequests) {
+              setFriendRequests(freshRequests);
+              if (freshRequests.some((r) => (r.senderId === data.strangerUserId || r.receiverId === data.strangerUserId) && r.status === "PENDING")) {
+                setFriendRequestSent(true);
+              }
+            }
+          })
+          .catch(() => {});
+      }
+
       setMessages([]);
       setReplyingTo(null);
       navigateTo("stranger-chat");
@@ -865,36 +929,60 @@ export default function Home() {
 
     newSocket.on("stranger_offline", (data?: { roomId?: string }) => {
       // Ignore if event does not belong to currently active stranger session
-      if (currentViewRef.current !== "stranger-chat" || !strangerRoomIdRef.current) return;
+      if (!strangerRoomIdRef.current) return;
       if (data?.roomId && data.roomId !== strangerRoomIdRef.current) return;
       setStrangerStatus("disconnected");
     });
 
     newSocket.on("stranger_left", (data?: { roomId?: string }) => {
-      // Ignore stale disconnect events from prior rooms, other views, or when already disconnected
-      if (currentViewRef.current !== "stranger-chat" || !strangerRoomIdRef.current) return;
+      if (!strangerRoomIdRef.current) return;
       if (data?.roomId && data.roomId !== strangerRoomIdRef.current) return;
       if (strangerStatusRef.current === "disconnected") return;
 
       setStrangerStatus("disconnected");
       showNotification("Stranger left the chat.");
+
+      // Clear any pending stranger notifications for this ended chat
+      setNotifications((prev) => {
+        const remaining = prev.filter((n) => n.type !== "STRANGER_MESSAGE");
+        const diff = prev.length - remaining.length;
+        if (diff > 0) setUnreadNotificationsCount((c) => Math.max(0, c - diff));
+        return remaining;
+      });
     });
 
     newSocket.on("stranger_skipped", (data?: { roomId?: string }) => {
-      if (currentViewRef.current !== "stranger-chat" || !strangerRoomIdRef.current) return;
+      if (!strangerRoomIdRef.current) return;
       if (data?.roomId && data.roomId !== strangerRoomIdRef.current) return;
       if (strangerStatusRef.current === "disconnected") return;
 
       setStrangerStatus("disconnected");
       showNotification("Stranger skipped to the next person.");
+
+      // Clear any pending stranger notifications for this ended chat
+      setNotifications((prev) => {
+        const remaining = prev.filter((n) => n.type !== "STRANGER_MESSAGE");
+        const diff = prev.length - remaining.length;
+        if (diff > 0) setUnreadNotificationsCount((c) => Math.max(0, c - diff));
+        return remaining;
+      });
     });
 
     newSocket.on("stranger_blocked", (data?: { roomId?: string }) => {
-      if (currentViewRef.current !== "stranger-chat" || !strangerRoomIdRef.current) return;
+      if (!strangerRoomIdRef.current) return;
       if (data?.roomId && data.roomId !== strangerRoomIdRef.current) return;
 
       setStrangerStatus("disconnected");
       showNotification("Stranger has been blocked.");
+
+      // Clear any pending stranger notifications for this ended chat
+      setNotifications((prev) => {
+        const remaining = prev.filter((n) => n.type !== "STRANGER_MESSAGE");
+        const diff = prev.length - remaining.length;
+        if (diff > 0) setUnreadNotificationsCount((c) => Math.max(0, c - diff));
+        return remaining;
+      });
+
       // Clean up chat view safely
       setTimeout(() => {
         setMessages([]);
@@ -1115,11 +1203,39 @@ export default function Home() {
           setUnreadVideoChatCount((prev) => prev + 1);
         }
 
-        // Acknowledge seen if active in stranger-chat
-        newSocket.emit("mark_seen", {
-          roomId: strangerRoomIdRef.current || undefined,
-          messageIds: [data.id],
-        });
+        if (currentViewRef.current === "stranger-chat") {
+          // Acknowledge seen immediately when active inside stranger-chat
+          newSocket.emit("mark_seen", {
+            roomId: strangerRoomIdRef.current || undefined,
+            messageIds: [data.id],
+          });
+        } else {
+          // User is elsewhere in Chirp (Discover, Friends, Profile, etc.):
+          // Create an in-app notification in the notification bell and alert the user
+          const previewText = isImage
+            ? "📷 Sent a photo"
+            : isAudio
+            ? "🎤 Sent a voice message"
+            : (displayText || "Sent a message");
+
+          const newNotifItem: AppNotification = {
+            id: `stranger-msg-${data.id || Date.now()}`,
+            type: "STRANGER_MESSAGE",
+            title: "Stranger",
+            body: previewText,
+            data: JSON.stringify({
+              view: "stranger-chat",
+              roomId: strangerRoomIdRef.current || "",
+              strangerUserId: strangerUserId || "",
+            }),
+            isRead: false,
+            createdAt: new Date().toISOString(),
+          };
+
+          setNotifications((prev) => [newNotifItem, ...prev]);
+          setUnreadNotificationsCount((prev) => prev + 1);
+          showNotification(`💬 Stranger: ${previewText}`);
+        }
       }
     );
 
@@ -2051,6 +2167,16 @@ export default function Home() {
     setStrangerUserId(null);
     setFriendRequestSent(false);
     setFriendRequestMessage("");
+    setIsSendingFriendRequest(false);
+    setIsAlreadyFriend(false);
+    setNotifications((prev) => {
+      const remaining = prev.filter((n) => n.type !== "STRANGER_MESSAGE");
+      const removedCount = prev.length - remaining.length;
+      if (removedCount > 0) {
+        setUnreadNotificationsCount((c) => Math.max(0, c - removedCount));
+      }
+      return remaining;
+    });
     setMessage("");
     setViewProfile(null);
     setWaiting(true);
@@ -2095,11 +2221,23 @@ export default function Home() {
     setStrangerUserId(null);
     setFriendRequestSent(false);
     setFriendRequestMessage("");
+    setIsSendingFriendRequest(false);
+    setIsAlreadyFriend(false);
     setMessage("");
     setViewProfile(null);
     setWaiting(false);
     setMatchingMode("idle");
     setSearchElapsedSeconds(0);
+
+    // Clear any lingering stranger-message notifications for the ended chat
+    setNotifications((prev) => {
+      const remaining = prev.filter((n) => n.type !== "STRANGER_MESSAGE");
+      const removedCount = prev.length - remaining.length;
+      if (removedCount > 0) {
+        setUnreadNotificationsCount((c) => Math.max(0, c - removedCount));
+      }
+      return remaining;
+    });
 
     navigateTo("matching");
   };
@@ -2508,16 +2646,21 @@ export default function Home() {
 
   const markNotificationAsRead = async (id: string) => {
     if (!userId) return;
+    setNotifications((prev) =>
+      prev.map((n) => (n.id === id ? { ...n, isRead: true } : n))
+    );
+    setUnreadNotificationsCount((prev) => Math.max(0, prev - 1));
+
+    if (id.startsWith("temp-") || id.startsWith("stranger-msg-")) {
+      return;
+    }
+
     try {
       await fetch(`${BACKEND_URL}/notifications/${id}/read`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId }),
       });
-      setNotifications((prev) =>
-        prev.map((n) => (n.id === id ? { ...n, isRead: true } : n))
-      );
-      setUnreadNotificationsCount((prev) => Math.max(0, prev - 1));
     } catch (err) {
       console.warn("Could not mark notification as read:", err);
     }
@@ -2602,7 +2745,26 @@ export default function Home() {
   };
 
   const handleSelectNotification = async (notif: AppNotification) => {
-    if (notif.type === "FRIEND_REQUEST") {
+    if (notif.type === "STRANGER_MESSAGE") {
+      // Mark notification as read
+      markNotificationAsRead(notif.id);
+
+      // Return to the active stranger chat without resetting room or calling find_stranger
+      navigateTo("stranger-chat");
+
+      // Mark all unread stranger messages in the room as seen
+      if (socket && strangerRoomIdRef.current) {
+        const unreadIds = messages
+          .filter((m) => m.sender === "stranger" && m.id && m.status !== "seen")
+          .map((m) => m.id as string);
+        if (unreadIds.length > 0) {
+          socket.emit("mark_seen", {
+            roomId: strangerRoomIdRef.current,
+            messageIds: unreadIds,
+          });
+        }
+      }
+    } else if (notif.type === "FRIEND_REQUEST") {
       openFriends();
     } else if (notif.type === "FRIEND_ACCEPTED" || notif.type === "NEW_MESSAGE") {
       try {
@@ -2993,7 +3155,8 @@ export default function Home() {
   };
 
   const sendFriendRequest = async () => {
-    if (!userId || !strangerUserId) return;
+    if (!userId || !strangerUserId || isSendingFriendRequest || friendRequestSent || isAlreadyFriend) return;
+    setIsSendingFriendRequest(true);
     try {
       setFriendRequestMessage("");
       const res = await fetch(`${BACKEND_URL}/friends/request`, {
@@ -3001,11 +3164,35 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ senderId: userId, receiverId: strangerUserId }),
       });
-      if (!res.ok) throw new Error("Failed to send friend request");
-      setFriendRequestSent(true);
-      setFriendRequestMessage("Friend request sent");
+
+      const data = await res.json().catch(() => null);
+
+      if (res.ok) {
+        setFriendRequestSent(true);
+        setFriendRequestMessage("Friend request sent");
+        showNotification("✓ Friend request sent!");
+        loadFriendRequests();
+      } else {
+        const errorMsg = data?.message || "Failed to send friend request";
+        if (errorMsg.includes("already friends")) {
+          setIsAlreadyFriend(true);
+          setFriendRequestMessage("You are already friends");
+          showNotification("You are already friends with this user!");
+        } else if (errorMsg.includes("already exists")) {
+          setFriendRequestSent(true);
+          setFriendRequestMessage("Friend request already sent");
+          showNotification("Friend request already pending.");
+        } else {
+          setFriendRequestMessage(errorMsg);
+          showNotification(errorMsg);
+        }
+      }
     } catch (err) {
+      console.warn("Error sending friend request:", err);
       setFriendRequestMessage("Failed to send friend request");
+      showNotification("Could not send friend request. Please try again.");
+    } finally {
+      setIsSendingFriendRequest(false);
     }
   };
 
@@ -3803,19 +3990,26 @@ export default function Home() {
 
                   {/* Add Friend Banner */}
                   <div className="px-4 py-2 border-b border-zinc-800/80 bg-zinc-950/60 flex items-center justify-between shrink-0">
-                    {!friendRequestSent ? (
+                    {isAlreadyFriend ? (
+                      <div className="w-full text-center bg-indigo-950/40 border border-indigo-800/50 text-indigo-300 py-1.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5">
+                        <span>✓</span>
+                        <span>Already Friends</span>
+                      </div>
+                    ) : friendRequestSent ? (
+                      <div className="w-full text-center bg-emerald-950/50 border border-emerald-800/60 text-emerald-300 py-1.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5">
+                        <span>✓</span>
+                        <span>Friend request sent</span>
+                      </div>
+                    ) : (
                       <button
+                        type="button"
                         onClick={sendFriendRequest}
-                        disabled={!strangerUserId}
-                        className="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-1.5 rounded-xl text-xs font-semibold transition disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed shadow-xs flex items-center justify-center gap-1.5"
+                        disabled={!strangerUserId || isSendingFriendRequest}
+                        className="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-1.5 rounded-xl text-xs font-semibold transition disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed shadow-xs flex items-center justify-center gap-1.5 active:scale-98"
                       >
                         <span>👥</span>
-                        <span>Add Stranger as Friend</span>
+                        <span>{isSendingFriendRequest ? "Sending request..." : "Add Stranger as Friend"}</span>
                       </button>
-                    ) : (
-                      <div className="w-full text-center bg-emerald-950/50 border border-emerald-800/60 text-emerald-300 py-1.5 rounded-xl text-xs font-semibold">
-                        ✓ Friend request sent
-                      </div>
                     )}
                   </div>
 
@@ -3854,6 +4048,26 @@ export default function Home() {
                 <p className="text-zinc-400 mt-1.5 text-center text-xs sm:text-sm">
                   Connect anonymously with people worldwide matching your interests.
                 </p>
+
+                {/* Active Stranger Chat Resume Banner */}
+                {strangerRoomId && strangerStatus !== "disconnected" && (
+                  <div className="mt-5 p-3.5 rounded-2xl bg-indigo-950/50 border border-indigo-500/40 flex items-center justify-between gap-3 animate-fadeIn">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-white truncate">Active Stranger Chat</p>
+                        <p className="text-[11px] text-indigo-300 truncate">Your conversation is still active</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => navigateTo("stranger-chat")}
+                      className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition shadow-xs shrink-0 active:scale-95"
+                    >
+                      Return to Chat →
+                    </button>
+                  </div>
+                )}
 
                 {/* Friends & Requests shortcut banner */}
                 <button

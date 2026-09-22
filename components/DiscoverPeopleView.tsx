@@ -213,19 +213,22 @@ export default function DiscoverPeopleView({
     <div className="flex-1 w-full max-w-5xl mx-auto p-3 sm:p-6 overflow-y-auto min-h-0 safe-bottom">
       <div className="w-full bg-zinc-900/90 backdrop-blur-md border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl">
         {/* TOP BAR */}
-        <div className="flex items-center justify-between px-5 sm:px-6 py-4 border-b border-zinc-800 bg-zinc-950/60">
-          <div className="flex items-center gap-3">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between px-4 sm:px-6 py-3.5 sm:py-4 border-b border-zinc-800 bg-zinc-950/60 gap-3 sm:gap-4">
+          {/* Mobile Row 1: Back Button & Filters toggle | Desktop: Left side with Back & Title */}
+          <div className="flex items-center justify-between sm:justify-start gap-3 w-full sm:w-auto">
             {onBack && (
               <button
                 type="button"
                 onClick={onBack}
-                className="px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white text-xs font-semibold transition border border-zinc-700/60 flex items-center gap-1.5 active:scale-95"
+                className="px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white text-xs font-semibold transition border border-zinc-700/60 flex items-center gap-1.5 active:scale-95 shrink-0"
               >
                 <span>←</span>
                 <span>Back</span>
               </button>
             )}
-            <div>
+
+            {/* Title & Description: Visible here only on desktop (sm:) */}
+            <div className="hidden sm:block">
               <h1 className="text-lg font-bold text-white flex items-center gap-2">
                 <span>🌟</span>
                 <span>Discover People</span>
@@ -234,12 +237,42 @@ export default function DiscoverPeopleView({
                 Connect with real Chirp members, browse profiles, and build lasting friendships
               </p>
             </div>
+
+            {/* Mobile Filters button on top right */}
+            <button
+              type="button"
+              onClick={() => setShowFilterDrawer((prev) => !prev)}
+              className={`sm:hidden px-3 py-1.5 rounded-xl text-xs font-semibold border transition flex items-center gap-1.5 shrink-0 ml-auto ${
+                hasActiveFilters
+                  ? "bg-indigo-600/20 text-indigo-300 border-indigo-500/40"
+                  : "bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-700/60"
+              }`}
+            >
+              <span>⚙️</span>
+              <span>Filters</span>
+              {hasActiveFilters && (
+                <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse inline-block" />
+              )}
+              <span className="text-[9px]">{showFilterDrawer ? "▲" : "▼"}</span>
+            </button>
           </div>
 
+          {/* Mobile Row 2: Title & Description with full width */}
+          <div className="sm:hidden px-0.5">
+            <h1 className="text-base font-bold text-white flex items-center gap-1.5">
+              <span>🌟</span>
+              <span>Discover People</span>
+            </h1>
+            <p className="text-xs text-zinc-400 mt-0.5 leading-relaxed">
+              Connect with real Chirp members, browse profiles, and build lasting friendships
+            </p>
+          </div>
+
+          {/* Desktop Filters Button */}
           <button
             type="button"
             onClick={() => setShowFilterDrawer((prev) => !prev)}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold border transition flex items-center gap-2 ${
+            className={`hidden sm:flex px-3.5 py-1.5 rounded-xl text-xs font-semibold border transition items-center gap-2 shrink-0 ${
               hasActiveFilters
                 ? "bg-indigo-600/20 text-indigo-300 border-indigo-500/40"
                 : "bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-700/60"
