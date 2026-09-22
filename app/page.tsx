@@ -3339,14 +3339,14 @@ export default function Home() {
   // ==========================================
 
   return (
-    <div className="min-h-screen h-screen h-[100dvh] flex flex-col relative text-zinc-100 overflow-hidden bg-[#030308]">
+    <div className="h-full h-[100dvh] max-h-[100dvh] w-full flex flex-col relative text-zinc-100 overflow-hidden bg-[#030308]">
       {/* Background galaxy layer */}
       <GalaxyBackground />
 
       {notificationBanner}
 
       {/* TOP APPLICATION HEADER (☰ Hamburger, Brand, New Chat, Profile, Notifications, Online status) */}
-      <div className="relative z-20">
+      <div className="relative z-20 shrink-0">
         <AppHeader
           onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
           onNewChat={() => {
@@ -3369,7 +3369,7 @@ export default function Home() {
       </div>
 
       {/* MAIN BODY: SIDEBAR + RIGHT WORKSPACE */}
-      <div className="flex-1 flex overflow-hidden relative z-10">
+      <div className="flex-1 flex min-h-0 w-full overflow-hidden relative z-10">
         {/* LEFT NAVIGATION SIDEBAR */}
         <AppSidebar
           isOpen={isSidebarOpen}
@@ -3410,24 +3410,25 @@ export default function Home() {
         />
 
         {/* RIGHT WORKSPACE AREA */}
-        <main className="flex-1 flex flex-col min-w-0 bg-transparent overflow-y-auto relative">
+        <main className="flex-1 flex flex-col min-w-0 min-h-0 h-full bg-transparent overflow-hidden relative">
           {/* VIEW: PRIVATE FRIEND CHAT */}
           {currentView === "friend-chat" && (
             <div className="flex-1 flex flex-col h-full w-full max-w-5xl mx-auto bg-zinc-900/95 backdrop-blur-md sm:border-x border-zinc-800/80 shadow-2xl overflow-hidden">
               {/* Header */}
-              <div className="flex items-center gap-3 px-4 sm:px-6 py-3 border-b border-zinc-800/90 bg-zinc-900/95 backdrop-blur-md shrink-0">
+              <div className="flex items-center gap-2 sm:gap-3 px-3 sm:px-6 py-2.5 sm:py-3 border-b border-zinc-800/90 bg-zinc-900/95 backdrop-blur-md shrink-0">
                 <button
                   onClick={closeFriendChat}
-                  className="px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white border border-zinc-700/60 text-xs font-semibold transition shadow-xs flex items-center gap-1.5 active:scale-95"
+                  className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white border border-zinc-700/60 text-xs font-semibold transition shadow-xs flex items-center gap-1.5 active:scale-95 shrink-0"
                 >
                   <span>←</span>
-                  <span className="hidden xs:inline">Back to Friends</span>
+                  <span className="hidden sm:inline">Back to Friends</span>
+                  <span className="sm:hidden">Back</span>
                 </button>
 
                 <div className="flex-1 min-w-0">
                   <h1 className="font-bold text-white text-sm truncate flex items-center gap-1.5">
                     {selectedFriend?.avatar && <span>{selectedFriend.avatar}</span>}
-                    <span>{selectedFriend?.username || "Friend"}</span>
+                    <span className="truncate">{selectedFriend?.username || "Friend"}</span>
                   </h1>
                   {selectedFriend?.isOnline ? (
                     <div className="flex items-center gap-1.5 text-[11px] font-medium text-emerald-400">
@@ -3435,9 +3436,9 @@ export default function Home() {
                       <span>Online</span>
                     </div>
                   ) : (
-                    <div className="flex items-center gap-1.5 text-[11px] text-zinc-400">
-                      <span className="w-2 h-2 rounded-full bg-zinc-600 inline-block" />
-                      <span>
+                    <div className="flex items-center gap-1.5 text-[11px] text-zinc-400 truncate">
+                      <span className="w-2 h-2 rounded-full bg-zinc-600 inline-block shrink-0" />
+                      <span className="truncate">
                         Offline
                         {selectedFriend?.lastSeenAt
                           ? ` • Last seen ${formatLastSeen(selectedFriend.lastSeenAt)}`
@@ -3463,21 +3464,21 @@ export default function Home() {
                       ? "Video call in progress"
                       : "Start Video Call"
                   }
-                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 active:scale-95 shadow-xs ${
+                  className={`px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 active:scale-95 shadow-xs shrink-0 ${
                     friendVideoCall.callState === "connected" || friendVideoCall.callState === "connecting"
                       ? "bg-rose-600 text-white hover:bg-rose-500 border border-rose-500/50"
                       : "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white border border-indigo-500/40 shadow-indigo-600/20"
                   } disabled:opacity-40 disabled:cursor-not-allowed`}
                 >
                   <span>🎥</span>
-                  <span className="hidden xs:inline">Video Call</span>
+                  <span className="hidden sm:inline">Video Call</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => openUserProfile(selectedFriend?.id || null)}
                   disabled={!selectedFriend?.id}
-                  className="px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-700/60 text-zinc-200 hover:text-white text-xs font-medium transition disabled:opacity-50 flex items-center gap-1"
+                  className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-700/60 text-zinc-200 hover:text-white text-xs font-medium transition disabled:opacity-50 flex items-center gap-1 shrink-0"
                 >
                   <span>👤</span>
                   <span className="hidden sm:inline">Profile</span>
@@ -3547,7 +3548,7 @@ export default function Home() {
 
           {/* VIEW: FRIENDS PANEL */}
           {currentView === "friends" && (
-            <div className="flex-1 w-full max-w-4xl mx-auto p-4 sm:p-6 overflow-y-auto">
+            <div className="flex-1 w-full max-w-4xl mx-auto p-3 sm:p-6 overflow-y-auto min-h-0 safe-bottom">
               <div className="w-full bg-zinc-900/90 backdrop-blur-md border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl">
                 <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 bg-zinc-950/50">
                   <div>
@@ -3822,17 +3823,17 @@ export default function Home() {
                   {strangerChatBody}
 
                   {/* Action Footer: Next Stranger & End Chat */}
-                  <div className="grid grid-cols-2 border-t border-zinc-800/90 divide-x divide-zinc-800/90 bg-zinc-900 shrink-0">
+                  <div className="grid grid-cols-2 border-t border-zinc-800/90 divide-x divide-zinc-800/90 bg-zinc-900 shrink-0 safe-bottom">
                     <button
                       onClick={handleNextStranger}
-                      className="py-3 text-xs sm:text-sm font-semibold text-indigo-400 hover:bg-zinc-800 transition flex items-center justify-center gap-1.5"
+                      className="py-2.5 sm:py-3 text-xs sm:text-sm font-semibold text-indigo-400 hover:bg-zinc-800 transition flex items-center justify-center gap-1.5 active:scale-95"
                     >
                       <span>⏭️</span>
                       <span>Next Stranger</span>
                     </button>
                     <button
                       onClick={handleExitStrangerChat}
-                      className="py-3 text-xs sm:text-sm font-semibold text-rose-400 hover:bg-zinc-800 transition flex items-center justify-center gap-1.5"
+                      className="py-2.5 sm:py-3 text-xs sm:text-sm font-semibold text-rose-400 hover:bg-zinc-800 transition flex items-center justify-center gap-1.5 active:scale-95"
                     >
                       <span>✕</span>
                       <span>End Chat</span>
@@ -3845,7 +3846,7 @@ export default function Home() {
 
           {/* VIEW: MAIN MATCHING SETUP SCREEN */}
           {currentView === "matching" && (
-            <div className="flex-1 flex flex-col items-center justify-center p-4 sm:p-8">
+            <div className="flex-1 w-full flex flex-col items-center justify-center p-3 sm:p-8 overflow-y-auto min-h-0 safe-bottom">
               <div className="w-full max-w-lg bg-zinc-900/90 backdrop-blur-md border border-zinc-800/90 rounded-3xl p-6 sm:p-8 shadow-2xl text-zinc-100">
                 <h1 className="text-2xl sm:text-3xl font-extrabold text-white text-center tracking-tight">
                   Stranger Chat

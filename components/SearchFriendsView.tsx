@@ -186,7 +186,7 @@ export default function SearchFriendsView({
   };
 
   return (
-    <div className="flex-1 w-full max-w-4xl mx-auto p-4 sm:p-6 overflow-y-auto">
+    <div className="flex-1 w-full max-w-4xl mx-auto p-3 sm:p-6 overflow-y-auto min-h-0 safe-bottom">
       <div className="w-full bg-zinc-900/90 backdrop-blur-md border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 bg-zinc-950/60">

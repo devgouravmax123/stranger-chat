@@ -242,7 +242,7 @@ export default function AiSuggestions({
             type="button"
             onClick={handleFetchSuggestions}
             disabled={isLoading || cooldownSeconds > 0 || disabled}
-            className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-indigo-600 to-purple-600 px-3 py-1 font-medium text-white shadow-sm transition hover:from-indigo-500 hover:to-purple-500 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100"
+            className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-indigo-600 to-purple-600 px-2.5 sm:px-3 py-1 font-medium text-white shadow-sm transition hover:from-indigo-500 hover:to-purple-500 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100 shrink-0"
             title={
               cooldownSeconds > 0
                 ? `Wait ${cooldownSeconds}s`
@@ -252,14 +252,15 @@ export default function AiSuggestions({
             {isLoading ? (
               <>
                 <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                <span>Generating...</span>
+                <span className="hidden xs:inline">Generating...</span>
               </>
             ) : cooldownSeconds > 0 ? (
               <span>Wait {cooldownSeconds}s</span>
             ) : (
               <>
                 <span>✨</span>
-                <span>Refresh ideas</span>
+                <span className="hidden xs:inline">Refresh ideas</span>
+                <span className="xs:hidden">Ideas</span>
               </>
             )}
           </button>
