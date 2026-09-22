@@ -453,7 +453,7 @@ export default function VoiceRecorder({
 
       {/* PREVIEW CARD (MATCHES SECTION 25 SPECIFICATION) */}
       {previewUrl && !recording && (
-        <div className="absolute bottom-full mb-3 right-0 sm:right-auto sm:left-0 w-80 max-w-[calc(100vw-32px)] bg-zinc-900/95 border border-zinc-700/90 rounded-2xl p-4 shadow-2xl backdrop-blur-xl z-30 animate-fadeIn text-zinc-100">
+        <div className="absolute bottom-full mb-3 right-0 sm:right-auto sm:left-0 w-72 sm:w-80 max-w-[calc(100vw-24px)] bg-zinc-900/95 border border-zinc-700/90 rounded-2xl p-3.5 sm:p-4 shadow-2xl backdrop-blur-xl z-30 animate-fadeIn text-zinc-100">
           {/* Header */}
           <div className="flex items-center justify-between pb-2.5 border-b border-zinc-800/80">
             <div className="flex items-center gap-2">

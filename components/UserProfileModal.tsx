@@ -47,11 +47,11 @@ export default function UserProfileModal({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md overflow-hidden rounded-2xl bg-zinc-900 border border-zinc-800 shadow-2xl text-zinc-100"
+        className="w-full max-w-md max-h-[90vh] flex flex-col overflow-hidden rounded-2xl bg-zinc-900 border border-zinc-800 shadow-2xl text-zinc-100"
         onClick={(event) => event.stopPropagation()}
       >
         {/* HEADER */}
-        <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
+        <div className="flex items-center justify-between border-b border-zinc-800 px-5 sm:px-6 py-4 shrink-0">
           <h2 id="user-profile-modal-title" className="text-lg font-semibold text-white">
             Profile
           </h2>
@@ -67,7 +67,7 @@ export default function UserProfileModal({
         </div>
 
         {/* PROFILE CONTENT */}
-        <div className="px-6 py-6">
+        <div className="px-5 sm:px-6 py-5 overflow-y-auto flex-1">
           {/* AVATAR */}
           <div className="flex justify-center">
             <div className="flex h-24 w-24 items-center justify-center rounded-full border-4 border-zinc-800 bg-zinc-800/60 text-5xl shadow-inner">

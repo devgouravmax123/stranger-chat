@@ -370,13 +370,13 @@ export default function VideoCallOverlay({
         {/* ==========================================
             FLOATING VIDEO CONTROLS BAR
             ========================================== */}
-        <div className="w-full px-4 py-3 bg-zinc-900/95 border-t border-zinc-800/90 backdrop-blur-md flex items-center justify-center gap-3 shrink-0 z-20">
-          {/* Microphone Toggle */}
+        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 sm:gap-3 px-3 sm:px-5 py-2.5 sm:py-3 rounded-2xl bg-zinc-900/90 border border-zinc-700/80 shadow-2xl backdrop-blur-md max-w-[calc(100vw-24px)] overflow-x-auto">
+          {/* Mic Toggle */}
           <button
             type="button"
             onClick={onToggleMute}
             aria-label={isMicMuted ? "Unmute microphone" : "Mute microphone"}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold border transition active:scale-95 shadow-sm ${
+            className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-xl text-xs font-bold border transition active:scale-95 shadow-sm shrink-0 ${
               isMicMuted
                 ? "bg-rose-950/80 border-rose-800 text-rose-300 hover:bg-rose-900"
                 : "bg-zinc-800/90 border-zinc-700 text-zinc-200 hover:bg-zinc-700 hover:text-white"
@@ -384,7 +384,7 @@ export default function VideoCallOverlay({
             title={isMicMuted ? "Unmute microphone" : "Mute microphone"}
           >
             <span className="text-sm">{isMicMuted ? "🔇" : "🎤"}</span>
-            <span className="hidden xs:inline">{isMicMuted ? "Muted" : "Mute"}</span>
+            <span className="hidden sm:inline">{isMicMuted ? "Muted" : "Mute"}</span>
           </button>
 
           {/* Camera Toggle */}
@@ -392,7 +392,7 @@ export default function VideoCallOverlay({
             type="button"
             onClick={onToggleCamera}
             aria-label={isCameraOff ? "Turn camera on" : "Turn camera off"}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold border transition active:scale-95 shadow-sm ${
+            className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-xl text-xs font-bold border transition active:scale-95 shadow-sm shrink-0 ${
               isCameraOff
                 ? "bg-rose-950/80 border-rose-800 text-rose-300 hover:bg-rose-900"
                 : "bg-zinc-800/90 border-zinc-700 text-zinc-200 hover:bg-zinc-700 hover:text-white"
@@ -400,7 +400,7 @@ export default function VideoCallOverlay({
             title={isCameraOff ? "Turn camera on" : "Turn camera off"}
           >
             <span className="text-sm">{isCameraOff ? "🚫" : "📹"}</span>
-            <span className="hidden xs:inline">{isCameraOff ? "Camera Off" : "Camera On"}</span>
+            <span className="hidden sm:inline">{isCameraOff ? "Camera Off" : "Camera On"}</span>
           </button>
 
           {/* Text Chat Drawer Toggle */}
@@ -408,7 +408,7 @@ export default function VideoCallOverlay({
             type="button"
             onClick={onToggleChat}
             aria-label={isChatOpen ? "Close text chat" : "Open text chat"}
-            className={`relative flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold border transition active:scale-95 shadow-sm ${
+            className={`relative flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-xl text-xs font-bold border transition active:scale-95 shadow-sm shrink-0 ${
               isChatOpen
                 ? "bg-indigo-600 border-indigo-500 text-white shadow-indigo-600/30"
                 : "bg-zinc-800/90 border-zinc-700 text-zinc-200 hover:bg-zinc-700 hover:text-white"
@@ -416,7 +416,7 @@ export default function VideoCallOverlay({
             title={isChatOpen ? "Hide chat panel" : "Open chat panel"}
           >
             <span className="text-sm">💬</span>
-            <span className="hidden xs:inline">Chat</span>
+            <span className="hidden sm:inline">Chat</span>
             {unreadChatCount > 0 && !isChatOpen && (
               <span className="absolute -top-1.5 -right-1.5 px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-extrabold shadow-sm animate-bounce">
                 {unreadChatCount}
@@ -429,11 +429,12 @@ export default function VideoCallOverlay({
             type="button"
             onClick={onEndCall}
             aria-label="End video call"
-            className="flex items-center gap-2 px-5 py-2 rounded-xl bg-gradient-to-r from-rose-600 to-red-700 hover:from-rose-500 hover:to-red-600 text-white text-xs font-bold shadow-lg shadow-rose-600/30 transition active:scale-95"
+            className="flex items-center gap-1.5 sm:gap-2 px-3.5 sm:px-5 py-2 rounded-xl bg-gradient-to-r from-rose-600 to-red-700 hover:from-rose-500 hover:to-red-600 text-white text-xs font-bold shadow-lg shadow-rose-600/30 transition active:scale-95 shrink-0"
             title="End video call and return to text chat"
           >
             <span className="text-sm">📞</span>
-            <span>End Call</span>
+            <span className="hidden xs:inline">End Call</span>
+            <span className="xs:hidden">End</span>
           </button>
         </div>
       </div>

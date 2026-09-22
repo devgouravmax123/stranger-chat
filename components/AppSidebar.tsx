@@ -51,7 +51,7 @@ export default function AppSidebar({
 
       {/* Sidebar Container */}
       <aside
-        className={`fixed md:static inset-y-0 left-0 z-40 w-72 md:w-80 flex flex-col bg-zinc-900/95 backdrop-blur-md border-r border-zinc-800 transition-transform duration-300 ease-in-out ${
+        className={`fixed md:static inset-y-0 left-0 z-40 w-72 sm:w-80 max-w-[85vw] flex flex-col bg-zinc-900/95 backdrop-blur-md border-r border-zinc-800 transition-transform duration-300 ease-in-out ${
           isOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
         } ${isOpen ? "md:flex" : "md:hidden"}`}
       >
@@ -64,15 +64,28 @@ export default function AppSidebar({
             <p className="text-[10px] text-zinc-400">Instant Stranger Chat</p>
           </div>
 
-          <button
-            type="button"
-            onClick={onStartNewChat}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white text-xs font-semibold border border-zinc-700/60 transition active:scale-95"
-            title="Start a new stranger search"
-          >
-            <span>✨</span>
-            <span>New Chat</span>
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={onStartNewChat}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white text-xs font-semibold border border-zinc-700/60 transition active:scale-95"
+              title="Start a new stranger search"
+            >
+              <span>✨</span>
+              <span>New Chat</span>
+            </button>
+
+            {/* Mobile close sidebar button */}
+            <button
+              type="button"
+              onClick={onClose}
+              className="md:hidden flex items-center justify-center h-8 w-8 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white border border-zinc-700/60 transition active:scale-95"
+              aria-label="Close sidebar"
+              title="Close sidebar"
+            >
+              ✕
+            </button>
+          </div>
         </div>
 
         {/* Navigation Tabs (Chat / Friends / Discover) */}

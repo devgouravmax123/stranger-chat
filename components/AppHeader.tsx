@@ -41,20 +41,20 @@ export default function AppHeader({
   };
 
   return (
-    <header className="h-14 border-b border-zinc-800/80 bg-zinc-900/90 backdrop-blur-md px-4 flex items-center justify-between z-30 shrink-0 select-none">
+    <header className="h-14 border-b border-zinc-800/80 bg-zinc-900/90 backdrop-blur-md px-3 sm:px-4 flex items-center justify-between z-30 shrink-0 select-none">
       {/* Left: Hamburger, Brand & New Chat */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2 sm:gap-3 min-w-0">
         <button
           type="button"
           onClick={onToggleSidebar}
           aria-label="Toggle Sidebar Navigation"
-          className="h-9 w-9 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 hover:text-white flex items-center justify-center transition active:scale-95 border border-zinc-700/50"
+          className="h-9 w-9 shrink-0 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 hover:text-white flex items-center justify-center transition active:scale-95 border border-zinc-700/50"
         >
           <span className="text-lg leading-none font-mono">☰</span>
         </button>
 
-        <div className="flex items-center mr-1">
-          <span className="text-base font-bold tracking-tight text-white hidden xs:inline">
+        <div className="flex items-center shrink-0">
+          <span className="text-base font-bold tracking-tight text-white inline">
             Chi<span className="text-indigo-400">rp</span>
           </span>
         </div>
@@ -62,7 +62,7 @@ export default function AppHeader({
         <button
           type="button"
           onClick={onNewChat}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white text-xs font-semibold shadow-md shadow-indigo-900/30 transition active:scale-95"
+          className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white text-xs font-semibold shadow-md shadow-indigo-900/30 transition active:scale-95 shrink-0"
         >
           <span>✨</span>
           <span className="hidden sm:inline font-bold">New Chat</span>
@@ -70,17 +70,17 @@ export default function AppHeader({
       </div>
 
       {/* Right: Icons (Profile, Notifications, Status) */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
         {/* Profile Button */}
         <button
           type="button"
           onClick={onOpenProfile}
           aria-label="View profile details"
           title="View profile details"
-          className="flex items-center gap-2 pl-2 pr-3 py-1 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 border border-zinc-700/50 text-xs text-zinc-200 transition"
+          className="flex items-center gap-1.5 sm:gap-2 px-2 sm:pl-2 sm:pr-3 py-1 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 border border-zinc-700/50 text-xs text-zinc-200 transition"
         >
-          <span className="text-base">{currentAvatar || "👤"}</span>
-          <span className="font-semibold max-w-[100px] truncate hidden sm:inline">
+          <span className="text-base leading-none">{currentAvatar || "👤"}</span>
+          <span className="font-semibold max-w-[80px] sm:max-w-[100px] truncate hidden md:inline">
             {currentUsername || "Profile"}
           </span>
         </button>
@@ -125,7 +125,7 @@ export default function AppHeader({
 
         {/* Realtime Status Indicator */}
         <div
-          className="h-9 px-2.5 rounded-xl bg-zinc-800/80 border border-zinc-700/50 text-zinc-300 flex items-center gap-1.5 text-xs font-medium"
+          className="h-9 px-2 sm:px-2.5 rounded-xl bg-zinc-800/80 border border-zinc-700/50 text-zinc-300 flex items-center gap-1.5 text-xs font-medium"
           title="Server and Real-time Gateway status"
         >
           <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />

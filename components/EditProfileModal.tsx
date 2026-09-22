@@ -155,10 +155,10 @@ export default function EditProfileModal({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl text-zinc-100 overflow-hidden relative"
+        className="w-full max-w-md max-h-[90vh] flex flex-col bg-zinc-900 border border-zinc-800 rounded-3xl p-5 sm:p-6 shadow-2xl text-zinc-100 overflow-hidden relative"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between pb-4 border-b border-zinc-800">
+        <div className="flex items-center justify-between pb-3 sm:pb-4 border-b border-zinc-800 shrink-0">
           <div className="flex items-center gap-2">
             <span className="text-xl">⚙️</span>
             <h2 id="edit-profile-modal-title" className="text-lg font-bold text-white tracking-tight">
@@ -175,7 +175,7 @@ export default function EditProfileModal({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="mt-5 space-y-4">
+        <form onSubmit={handleSubmit} className="mt-4 space-y-4 overflow-y-auto flex-1 pr-1">
           {/* Avatar Selection */}
           <div>
             <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">

@@ -103,7 +103,7 @@ export default function MessageList({
               }`}
             >
               <div
-                className={`relative flex items-center gap-2 max-w-[88%] sm:max-w-[75%] md:max-w-[70%] ${
+                className={`relative flex items-center gap-2 max-w-[92%] xs:max-w-[88%] sm:max-w-[75%] md:max-w-[70%] ${
                   isMe ? "flex-row-reverse" : "flex-row"
                 }`}
               >

@@ -220,7 +220,7 @@ export default function MessageInput({
   };
 
   return (
-    <div className="border-t border-zinc-800/90 bg-zinc-900/95 p-3 shrink-0">
+    <div className="border-t border-zinc-800/90 bg-zinc-900/95 p-2 sm:p-3 safe-bottom shrink-0">
       {/* ====================================== */}
       {/* REPLY PREVIEW BAR */}
       {/* ====================================== */}
@@ -336,13 +336,13 @@ export default function MessageInput({
       {/* INPUT BAR */}
       {/* ====================================== */}
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1.5 sm:gap-2">
         {/* EMOJI */}
         <button
           type="button"
           onClick={() => setShowEmojiPicker((previous) => !previous)}
           disabled={disabled}
-          className="h-11 w-11 shrink-0 rounded-xl bg-zinc-800/90 hover:bg-zinc-700 border border-zinc-700/60 text-xl transition disabled:cursor-not-allowed disabled:opacity-50 flex items-center justify-center text-zinc-200"
+          className="h-10 w-10 sm:h-11 sm:w-11 shrink-0 rounded-xl bg-zinc-800/90 hover:bg-zinc-700 border border-zinc-700/60 text-lg sm:text-xl transition disabled:cursor-not-allowed disabled:opacity-50 flex items-center justify-center text-zinc-200"
           aria-label="Open emoji picker"
         >
           😊
@@ -353,7 +353,7 @@ export default function MessageInput({
           type="button"
           onClick={handlePhotoClick}
           disabled={disabled}
-          className="h-11 w-11 shrink-0 rounded-xl bg-zinc-800/90 hover:bg-zinc-700 border border-zinc-700/60 text-xl transition disabled:cursor-not-allowed disabled:opacity-50 flex items-center justify-center text-zinc-200"
+          className="h-10 w-10 sm:h-11 sm:w-11 shrink-0 rounded-xl bg-zinc-800/90 hover:bg-zinc-700 border border-zinc-700/60 text-lg sm:text-xl transition disabled:cursor-not-allowed disabled:opacity-50 flex items-center justify-center text-zinc-200"
           title="Send photo"
           aria-label="Upload photo"
         >
@@ -388,7 +388,7 @@ export default function MessageInput({
           onChange={handleInputChange}
           onKeyDown={handleKeyDown}
           disabled={disabled}
-          className="min-w-0 flex-1 rounded-xl bg-zinc-950 border border-zinc-700/80 px-4 py-3 text-sm text-white placeholder-zinc-500 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 disabled:bg-zinc-900 transition"
+          className="min-w-0 flex-1 rounded-xl bg-zinc-950 border border-zinc-700/80 px-3 sm:px-4 py-2.5 sm:py-3 text-sm text-white placeholder-zinc-500 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 disabled:bg-zinc-900 transition"
         />
 
         {/* SEND */}
@@ -396,7 +396,7 @@ export default function MessageInput({
           type="button"
           onClick={handleSend}
           disabled={disabled || (!attachedFile && message.trim() === "")}
-          className="rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 px-5 py-3 font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-40 shrink-0 text-sm shadow-sm active:scale-95"
+          className="rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 px-3.5 sm:px-5 py-2.5 sm:py-3 font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-40 shrink-0 text-sm shadow-sm active:scale-95"
         >
           Send
         </button>

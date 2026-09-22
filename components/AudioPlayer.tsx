@@ -332,7 +332,7 @@ export default function AudioPlayer({
 
   return (
     <div
-      className={`flex items-center gap-3 rounded-2xl p-2.5 min-w-[240px] max-w-[300px] select-none transition-all ${
+      className={`flex items-center gap-2.5 sm:gap-3 rounded-2xl p-2 sm:p-2.5 min-w-[190px] xs:min-w-[230px] sm:min-w-[240px] max-w-[300px] select-none transition-all ${
         isMe ? "text-white" : "text-zinc-900"
       }`}
     >

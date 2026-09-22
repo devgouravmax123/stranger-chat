@@ -56,7 +56,7 @@ export default function NotificationDropdown({
   return (
     <div
       ref={panelRef}
-      className="absolute right-0 top-12 w-80 sm:w-96 rounded-2xl bg-zinc-900 border border-zinc-700/70 shadow-2xl overflow-hidden z-50 animate-fadeIn text-zinc-100"
+      className="absolute right-0 top-12 w-80 sm:w-96 max-w-[calc(100vw-24px)] rounded-2xl bg-zinc-900 border border-zinc-700/70 shadow-2xl overflow-hidden z-50 animate-fadeIn text-zinc-100"
     >
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800 bg-zinc-950/60">

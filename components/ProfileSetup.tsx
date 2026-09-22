@@ -267,7 +267,7 @@ export default function ProfileSetup({
   // ==========================================
 
   return (
-    <div className="w-full max-w-md bg-zinc-900/90 backdrop-blur-md border border-zinc-800/90 rounded-3xl p-6 sm:p-8 shadow-2xl text-zinc-100 animate-fadeIn">
+    <div className="w-full max-w-md max-h-[90vh] overflow-y-auto bg-zinc-900/90 backdrop-blur-md border border-zinc-800/90 rounded-3xl p-5 sm:p-8 shadow-2xl text-zinc-100 animate-fadeIn">
       {/* ====================================== */}
       {/* BRAND & HEADER */}
       {/* ====================================== */}
@@ -291,7 +291,7 @@ export default function ProfileSetup({
           Choose your avatar
         </label>
 
-        <div className="flex justify-center gap-2.5 flex-wrap">
+        <div className="flex justify-center gap-2 sm:gap-2.5 flex-wrap">
           {avatars.map((item) => (
             <button
               key={item}

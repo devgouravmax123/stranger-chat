@@ -79,7 +79,7 @@ export default function ChatHeader({
         </div>
       </div>
 
-      <div className="flex items-center gap-2 shrink-0">
+      <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
         {/* VIDEO CALL BUTTON */}
         {onStartVideoCall && (
           <button
@@ -94,7 +94,7 @@ export default function ChatHeader({
                 : "Start 1-to-1 Video Call"
             }
             aria-label="Start video call"
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition active:scale-95 shadow-sm ${
+            className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold transition active:scale-95 shadow-sm ${
               isVideoCallActive
                 ? "bg-emerald-950/80 text-emerald-400 border border-emerald-800/60 cursor-default"
                 : isVideoCallDisabled || status === "disconnected"
@@ -103,7 +103,7 @@ export default function ChatHeader({
             }`}
           >
             <span>{isVideoCallActive ? "🟢" : "🎥"}</span>
-            <span className="hidden sm:inline">
+            <span className="hidden md:inline">
               {isVideoCallActive ? "In Call" : "Video Call"}
             </span>
           </button>
@@ -115,9 +115,10 @@ export default function ChatHeader({
             type="button"
             onClick={onSkip}
             title="Skip to next stranger"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white text-xs font-semibold shadow-sm transition active:scale-95"
+            aria-label="Next stranger"
+            className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white text-xs font-semibold shadow-sm transition active:scale-95"
           >
-            <span>Next Stranger</span>
+            <span className="hidden xs:inline">Next</span>
             <span>⏭</span>
           </button>
         )}
@@ -126,10 +127,12 @@ export default function ChatHeader({
         <button
           type="button"
           onClick={onViewProfile}
-          className="px-2.5 py-1.5 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 hover:text-white text-xs font-medium border border-zinc-700/50 transition"
+          className="px-2.5 py-1.5 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 hover:text-white text-xs font-medium border border-zinc-700/50 transition flex items-center gap-1"
           title="View Stranger Profile"
+          aria-label="View stranger profile"
         >
-          👤 Profile
+          <span>👤</span>
+          <span className="hidden sm:inline">Profile</span>
         </button>
 
         {/* SAFETY MENU DROPDOWN */}

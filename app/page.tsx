@@ -3339,7 +3339,7 @@ export default function Home() {
   // ==========================================
 
   return (
-    <div className="min-h-screen h-screen flex flex-col relative text-zinc-100 overflow-hidden bg-[#030308]">
+    <div className="min-h-screen h-screen h-[100dvh] flex flex-col relative text-zinc-100 overflow-hidden bg-[#030308]">
       {/* Background galaxy layer */}
       <GalaxyBackground />
 
@@ -3413,7 +3413,7 @@ export default function Home() {
         <main className="flex-1 flex flex-col min-w-0 bg-transparent overflow-y-auto relative">
           {/* VIEW: PRIVATE FRIEND CHAT */}
           {currentView === "friend-chat" && (
-            <div className="flex-1 flex flex-col h-full w-full max-w-5xl mx-auto bg-zinc-900/95 backdrop-blur-md border-x border-zinc-800/80 shadow-2xl overflow-hidden">
+            <div className="flex-1 flex flex-col h-full w-full max-w-5xl mx-auto bg-zinc-900/95 backdrop-blur-md sm:border-x border-zinc-800/80 shadow-2xl overflow-hidden">
               {/* Header */}
               <div className="flex items-center gap-3 px-4 sm:px-6 py-3 border-b border-zinc-800/90 bg-zinc-900/95 backdrop-blur-md shrink-0">
                 <button
@@ -3732,7 +3732,7 @@ export default function Home() {
 
           {/* VIEW: ACTIVE STRANGER CHAT */}
           {currentView === "stranger-chat" && (
-            <div className="flex-1 flex flex-col h-full w-full max-w-5xl mx-auto bg-zinc-900 border-x border-zinc-800/80 shadow-2xl overflow-hidden">
+            <div className="flex-1 flex flex-col h-full w-full max-w-5xl mx-auto bg-zinc-900 sm:border-x border-zinc-800/80 shadow-2xl overflow-hidden">
               <ChatHeader
                 onViewProfile={() => openUserProfile(strangerUserId)}
                 onBack={handleExitStrangerChat}
