@@ -643,7 +643,7 @@ export default function Home() {
             if (profile && profile.username) {
               setCurrentUserProfile(profile);
               setProfileCompleted(true);
-              setCurrentView("matching");
+              setCurrentView((prev) => (prev === "profile-setup" ? "matching" : prev));
               if (profile.language) setLanguage(profile.language);
               if (profile.interests && Array.isArray(profile.interests)) setInterests(profile.interests);
               if (profile.goal) setGoal(profile.goal);
@@ -3543,6 +3543,8 @@ export default function Home() {
               navigateTo("matching");
             }
           }}
+          hasActiveStrangerChat={Boolean(strangerRoomId && strangerStatus !== "disconnected" && currentView !== "stranger-chat")}
+          onReturnToStrangerChat={() => navigateTo("stranger-chat")}
           onOpenProfile={() => setIsEditProfileOpen(true)}
           currentUsername={currentUserProfile?.username}
           currentAvatar={currentUserProfile?.avatar}
@@ -3574,11 +3576,15 @@ export default function Home() {
             } else if (tab === "discover" || tab === "search-friends") {
               navigateTo("discover");
             } else {
-              if (currentView !== "stranger-chat") {
+              if (strangerRoomId && strangerStatus !== "disconnected") {
+                navigateTo("stranger-chat");
+              } else if (currentView !== "stranger-chat") {
                 navigateTo("matching");
               }
             }
           }}
+          hasActiveStrangerChat={Boolean(strangerRoomId && strangerStatus !== "disconnected" && currentView !== "stranger-chat")}
+          onReturnToStrangerChat={() => navigateTo("stranger-chat")}
           userProfile={currentUserProfile}
           onOpenEditProfile={() => setIsEditProfileOpen(true)}
           onStartNewChat={() => {
@@ -4040,8 +4046,8 @@ export default function Home() {
 
           {/* VIEW: MAIN MATCHING SETUP SCREEN */}
           {currentView === "matching" && (
-            <div className="flex-1 w-full flex flex-col items-center justify-center p-3 sm:p-8 overflow-y-auto min-h-0 safe-bottom">
-              <div className="w-full max-w-lg bg-zinc-900/90 backdrop-blur-md border border-zinc-800/90 rounded-3xl p-6 sm:p-8 shadow-2xl text-zinc-100">
+            <div className="flex-1 w-full flex flex-col items-center justify-start sm:justify-center p-3 sm:p-6 md:p-8 overflow-y-auto min-h-0 safe-bottom">
+              <div className="w-full max-w-lg bg-zinc-900/90 backdrop-blur-md border border-zinc-800/90 rounded-3xl p-4 sm:p-6 md:p-8 shadow-2xl text-zinc-100 my-auto">
                 <h1 className="text-2xl sm:text-3xl font-extrabold text-white text-center tracking-tight">
                   Stranger Chat
                 </h1>

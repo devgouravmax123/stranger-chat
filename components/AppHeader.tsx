@@ -7,6 +7,8 @@ type AppHeaderProps = {
   onToggleSidebar: () => void;
   onNewChat: () => void;
   onOpenProfile: () => void;
+  hasActiveStrangerChat?: boolean;
+  onReturnToStrangerChat?: () => void;
   currentUsername?: string | null;
   currentAvatar?: string | null;
   unreadNotificationsCount?: number;
@@ -21,6 +23,8 @@ export default function AppHeader({
   onToggleSidebar,
   onNewChat,
   onOpenProfile,
+  hasActiveStrangerChat = false,
+  onReturnToStrangerChat,
   currentUsername,
   currentAvatar,
   unreadNotificationsCount = 0,
@@ -41,9 +45,9 @@ export default function AppHeader({
   };
 
   return (
-    <header className="h-14 border-b border-zinc-800/80 bg-zinc-900/90 backdrop-blur-md px-3 sm:px-4 flex items-center justify-between z-30 shrink-0 select-none">
-      {/* Left: Hamburger, Brand & New Chat */}
-      <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+    <header className="h-14 border-b border-zinc-800/80 bg-zinc-900/90 backdrop-blur-md px-2.5 sm:px-4 flex items-center justify-between z-30 shrink-0 select-none">
+      {/* Left: Hamburger, Brand, New Chat & Return to Chat */}
+      <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0">
         <button
           type="button"
           onClick={onToggleSidebar}
@@ -59,13 +63,27 @@ export default function AppHeader({
           </span>
         </div>
 
+        {hasActiveStrangerChat && (
+          <button
+            type="button"
+            onClick={onReturnToStrangerChat}
+            className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-xl bg-emerald-600/90 hover:bg-emerald-500 text-white text-xs font-semibold shadow-xs transition active:scale-95 shrink-0 border border-emerald-500/40 animate-pulse"
+            title="Return to your active stranger chat"
+          >
+            <span>💬</span>
+            <span className="font-bold text-[11px] sm:text-xs">
+              <span className="hidden sm:inline">Return to </span>Chat
+            </span>
+          </button>
+        )}
+
         <button
           type="button"
           onClick={onNewChat}
-          className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white text-xs font-semibold shadow-md shadow-indigo-900/30 transition active:scale-95 shrink-0"
+          className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white text-xs font-semibold shadow-md shadow-indigo-900/30 transition active:scale-95 shrink-0"
         >
           <span>✨</span>
-          <span className="hidden sm:inline font-bold">New Chat</span>
+          <span className="hidden md:inline font-bold">New Chat</span>
         </button>
       </div>
 

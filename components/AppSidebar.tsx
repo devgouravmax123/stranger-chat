@@ -14,6 +14,8 @@ type AppSidebarProps = {
   userProfile: UserProfile | null;
   onOpenEditProfile: () => void;
   onStartNewChat: () => void;
+  hasActiveStrangerChat?: boolean;
+  onReturnToStrangerChat?: () => void;
   friendsCount?: number;
   pendingRequestsCount?: number;
   searchQuery: string;
@@ -29,6 +31,8 @@ export default function AppSidebar({
   userProfile,
   onOpenEditProfile,
   onStartNewChat,
+  hasActiveStrangerChat = false,
+  onReturnToStrangerChat,
   friendsCount = 0,
   pendingRequestsCount = 0,
   searchQuery,
@@ -139,6 +143,31 @@ export default function AppSidebar({
             </button>
           </div>
         </div>
+
+        {/* Active Stranger Chat Banner in Sidebar (especially prominent on mobile) */}
+        {hasActiveStrangerChat && (
+          <div className="px-3 pb-2">
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onReturnToStrangerChat?.();
+              }}
+              className="w-full p-2.5 rounded-xl bg-gradient-to-r from-emerald-950/80 to-indigo-950/80 border border-emerald-500/50 hover:border-emerald-400 flex items-center justify-between gap-2 text-left transition active:scale-98 shadow-sm group"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-white group-hover:text-emerald-300 transition truncate">
+                    Active Stranger Chat
+                  </p>
+                  <p className="text-[10px] text-zinc-400 truncate">Tap to resume conversation</p>
+                </div>
+              </div>
+              <span className="text-xs font-bold text-emerald-400 shrink-0">Return →</span>
+            </button>
+          </div>
+        )}
 
         {/* Search Friends Input (Click to open Discover People) */}
         <div className="px-3 pb-2">
