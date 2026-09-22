@@ -57,6 +57,7 @@ interface SendFriendMessageDto {
   text?: string;
   envelope?: BackendE2EEAnyEnvelope;
   replyToId?: string;
+  clientId?: string;
 }
 
 interface VoiceMessageData {
@@ -324,7 +325,7 @@ export class ChatGateway implements OnGatewayInit {
         if (sock) {
           const roomId = this.inMemoryUserRooms.get(socketId);
           if (roomId) {
-            sock.to(roomId).emit('stranger_left');
+            sock.to(roomId).emit('stranger_left', { roomId });
             sock.leave(roomId);
           }
           sock.disconnect(true);
@@ -1611,6 +1612,7 @@ export class ChatGateway implements OnGatewayInit {
       // E2EE path: Emit envelope, DO NOT include plaintext text
       this.server.to(roomId).emit('receive_friend_message', {
         id: message.id,
+        clientId: data.clientId,
         envelope: validEnvelope,
         senderId: authenticatedSenderId,
         timestamp: message.createdAt.getTime(),
@@ -1622,12 +1624,22 @@ export class ChatGateway implements OnGatewayInit {
       // Legacy plaintext path
       this.server.to(roomId).emit('receive_friend_message', {
         id: message.id,
+        clientId: data.clientId,
         text: message.content,
         senderId: authenticatedSenderId,
         timestamp: message.createdAt.getTime(),
         type: 'text',
         status: 'sent',
         replyTo: replyToPayload,
+      });
+    }
+
+    // Explicit ACK for sender optimistic message reconciliation
+    if (data.clientId) {
+      socket.emit('friend_message_sent', {
+        id: message.id,
+        clientId: data.clientId,
+        status: 'sent',
       });
     }
 
@@ -2196,13 +2208,13 @@ export class ChatGateway implements OnGatewayInit {
       });
     }
 
-    // Notify stranger of exit reason
+    // Notify stranger of exit reason with roomId identity
     if (reason === 'skipped') {
-      socket.to(roomId).emit('stranger_skipped');
+      socket.to(roomId).emit('stranger_skipped', { roomId });
     } else if (reason === 'blocked') {
-      socket.to(roomId).emit('stranger_blocked');
+      socket.to(roomId).emit('stranger_blocked', { roomId });
     } else {
-      socket.to(roomId).emit('stranger_left');
+      socket.to(roomId).emit('stranger_left', { roomId });
     }
 
     if (chatId) {
@@ -2266,7 +2278,7 @@ export class ChatGateway implements OnGatewayInit {
           reason: 'disconnected',
         });
       }
-      socket.to(roomId).emit('stranger_offline');
+      socket.to(roomId).emit('stranger_offline', { roomId });
     }
 
     if (this.redis.getIsConnected()) {

@@ -358,6 +358,7 @@ describe('ChatGateway - Phase 3 Step 2 Backend E2EE Transport & Storage', () => 
         roomId,
         senderId,
         envelope: validEnvelope as any,
+        clientId: 'client-friend-123',
       });
 
       // Assert DB persistence
@@ -372,10 +373,11 @@ describe('ChatGateway - Phase 3 Step 2 Backend E2EE Transport & Storage', () => 
         include: { replyTo: true },
       });
 
-      // Assert friend broadcast contains envelope and NO text property
+      // Assert friend broadcast contains envelope, clientId, and NO text property
       const serverToMock = (gateway.server.to as any)(roomId).emit;
       expect(serverToMock).toHaveBeenCalledWith('receive_friend_message', {
         id: 'friend-msg-1',
+        clientId: 'client-friend-123',
         envelope: validEnvelope,
         senderId,
         timestamp: 1700000005000,
@@ -385,6 +387,14 @@ describe('ChatGateway - Phase 3 Step 2 Backend E2EE Transport & Storage', () => 
       });
       const friendPayload = serverToMock.mock.calls[0][1];
       expect(friendPayload.text).toBeUndefined();
+      expect(friendPayload.clientId).toBe('client-friend-123');
+
+      // Assert friend_message_sent ACK was emitted to sender
+      expect(socket.emit).toHaveBeenCalledWith('friend_message_sent', {
+        id: 'friend-msg-1',
+        clientId: 'client-friend-123',
+        status: 'sent',
+      });
 
       // Assert notification body is strictly generic
       expect(mockNotifications.createNotification).toHaveBeenCalledWith({

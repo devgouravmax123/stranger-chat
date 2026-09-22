@@ -337,6 +337,9 @@ export default function Home() {
   const strangerChatIdRef = useRef<string | null>(null);
   strangerChatIdRef.current = strangerChatId;
 
+  const strangerStatusRef = useRef<"online" | "disconnected" | "connecting">(strangerStatus);
+  strangerStatusRef.current = strangerStatus;
+
   const [strangerPublicKey, setStrangerPublicKey] = useState<string | null>(null);
   const strangerPublicKeyRef = useRef<string | null>(null);
   strangerPublicKeyRef.current = strangerPublicKey;
@@ -860,21 +863,36 @@ export default function Home() {
       setStrangerStatus("online");
     });
 
-    newSocket.on("stranger_offline", () => {
+    newSocket.on("stranger_offline", (data?: { roomId?: string }) => {
+      // Ignore if event does not belong to currently active stranger session
+      if (currentViewRef.current !== "stranger-chat" || !strangerRoomIdRef.current) return;
+      if (data?.roomId && data.roomId !== strangerRoomIdRef.current) return;
       setStrangerStatus("disconnected");
     });
 
-    newSocket.on("stranger_left", () => {
+    newSocket.on("stranger_left", (data?: { roomId?: string }) => {
+      // Ignore stale disconnect events from prior rooms, other views, or when already disconnected
+      if (currentViewRef.current !== "stranger-chat" || !strangerRoomIdRef.current) return;
+      if (data?.roomId && data.roomId !== strangerRoomIdRef.current) return;
+      if (strangerStatusRef.current === "disconnected") return;
+
       setStrangerStatus("disconnected");
       showNotification("Stranger left the chat.");
     });
 
-    newSocket.on("stranger_skipped", () => {
+    newSocket.on("stranger_skipped", (data?: { roomId?: string }) => {
+      if (currentViewRef.current !== "stranger-chat" || !strangerRoomIdRef.current) return;
+      if (data?.roomId && data.roomId !== strangerRoomIdRef.current) return;
+      if (strangerStatusRef.current === "disconnected") return;
+
       setStrangerStatus("disconnected");
       showNotification("Stranger skipped to the next person.");
     });
 
-    newSocket.on("stranger_blocked", () => {
+    newSocket.on("stranger_blocked", (data?: { roomId?: string }) => {
+      if (currentViewRef.current !== "stranger-chat" || !strangerRoomIdRef.current) return;
+      if (data?.roomId && data.roomId !== strangerRoomIdRef.current) return;
+
       setStrangerStatus("disconnected");
       showNotification("Stranger has been blocked.");
       // Clean up chat view safely
@@ -954,7 +972,22 @@ export default function Home() {
         // Handle E2EE envelope decryption
         if (data.envelope) {
           const activeChatId = strangerChatIdRef.current;
-          const peerKey = strangerPublicKeyRef.current;
+          let peerKey = strangerPublicKeyRef.current;
+
+          // Fallback: if stranger public key not yet in ref, fetch profile
+          if (!peerKey && data.senderId) {
+            try {
+              const pRes = await fetch(`${BACKEND_URL}/users/${data.senderId}/profile`);
+              if (pRes.ok) {
+                const pData = await pRes.json();
+                if (pData?.publicKey) {
+                  peerKey = pData.publicKey;
+                  setStrangerPublicKey(pData.publicKey);
+                  strangerPublicKeyRef.current = pData.publicKey;
+                }
+              }
+            } catch {}
+          }
 
           if (activeChatId && peerKey) {
             try {
@@ -2754,6 +2787,7 @@ export default function Home() {
         senderId: userId,
         envelope,
         replyToId: targetReplyingTo?.id,
+        clientId,
       });
     } catch (encErr) {
       console.error("[E2EE] Failed to encrypt friend message:", encErr);
@@ -2850,6 +2884,7 @@ export default function Home() {
         senderId: userId,
         envelope,
         replyToId: targetReplyingTo?.id,
+        clientId,
       });
     } catch (encErr) {
       console.error("[E2EE] Failed to encrypt friend voice note:", encErr);
@@ -2947,6 +2982,7 @@ export default function Home() {
         senderId: userId,
         envelope,
         replyToId: targetReplyingTo?.id,
+        clientId,
       });
     } catch (encErr) {
       console.error("[E2EE] Failed to encrypt friend photo:", encErr);
