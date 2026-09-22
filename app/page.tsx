@@ -4046,7 +4046,7 @@ export default function Home() {
 
           {/* VIEW: MAIN MATCHING SETUP SCREEN */}
           {currentView === "matching" && (
-            <div className="flex-1 w-full flex flex-col items-center justify-start sm:justify-center p-3 sm:p-6 md:p-8 overflow-y-auto min-h-0 safe-bottom">
+            <div className="flex-1 w-full flex flex-col items-center justify-start p-3 sm:p-6 md:p-8 overflow-y-auto min-h-0 safe-bottom">
               <div className="w-full max-w-lg bg-zinc-900/90 backdrop-blur-md border border-zinc-800/90 rounded-3xl p-4 sm:p-6 md:p-8 shadow-2xl text-zinc-100 my-auto">
                 <h1 className="text-2xl sm:text-3xl font-extrabold text-white text-center tracking-tight">
                   Stranger Chat

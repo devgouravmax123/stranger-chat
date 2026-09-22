@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import AudioPlayer from "./AudioPlayer";
 import ImageLightboxModal from "./ImageLightboxModal";
 
@@ -40,6 +40,9 @@ type MessageListProps = {
   onToggleReaction?: (messageId: string, emoji: string) => void;
 };
 
+const LONG_PRESS_DURATION = 500; // ms
+const LONG_PRESS_MOVE_THRESHOLD = 10; // px — cancel if finger moves more than this
+
 export default function MessageList({
   messages,
   currentUserId = null,
@@ -49,6 +52,49 @@ export default function MessageList({
 }: MessageListProps) {
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [activeActionId, setActiveActionId] = useState<string | null>(null);
+  const [longPressActionId, setLongPressActionId] = useState<string | null>(null);
+
+  // Long-press refs
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
+
+  const clearLongPress = useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    touchStartPosRef.current = null;
+  }, []);
+
+  const handleTouchStart = useCallback(
+    (msgKey: string, e: React.TouchEvent) => {
+      const touch = e.touches[0];
+      touchStartPosRef.current = { x: touch.clientX, y: touch.clientY };
+      longPressTimerRef.current = setTimeout(() => {
+        setLongPressActionId((prev) => (prev === msgKey ? null : msgKey));
+        setActiveActionId(null); // close emoji picker if open
+        longPressTimerRef.current = null;
+      }, LONG_PRESS_DURATION);
+    },
+    [],
+  );
+
+  const handleTouchMove = useCallback(
+    (e: React.TouchEvent) => {
+      if (!touchStartPosRef.current) return;
+      const touch = e.touches[0];
+      const dx = Math.abs(touch.clientX - touchStartPosRef.current.x);
+      const dy = Math.abs(touch.clientY - touchStartPosRef.current.y);
+      if (dx > LONG_PRESS_MOVE_THRESHOLD || dy > LONG_PRESS_MOVE_THRESHOLD) {
+        clearLongPress();
+      }
+    },
+    [clearLongPress],
+  );
+
+  const handleTouchEnd = useCallback(() => {
+    clearLongPress();
+  }, [clearLongPress]);
 
   const availableEmojis = ["❤️", "😂", "👍", "😮", "😢", "😡"];
 
@@ -78,7 +124,10 @@ export default function MessageList({
   };
 
   return (
-    <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3">
+    <div
+      className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3"
+      onClick={() => { setLongPressActionId(null); setActiveActionId(null); }}
+    >
       {messages.length === 0 ? (
         <div className="h-full flex flex-col items-center justify-center text-center p-6 text-zinc-500">
           <div className="w-12 h-12 rounded-2xl bg-zinc-800/60 border border-zinc-700/40 flex items-center justify-center text-2xl mb-3 shadow-inner">
@@ -101,6 +150,10 @@ export default function MessageList({
               className={`group relative flex flex-col ${
                 isMe ? "items-end" : "items-start"
               }`}
+              onTouchStart={(e) => handleTouchStart(msgKey, e)}
+              onTouchMove={handleTouchMove}
+              onTouchEnd={handleTouchEnd}
+              onTouchCancel={handleTouchEnd}
             >
               <div
                 className={`relative flex items-center gap-2 max-w-[92%] xs:max-w-[88%] sm:max-w-[75%] md:max-w-[70%] ${
@@ -206,13 +259,13 @@ export default function MessageList({
                   </div>
                 </div>
 
-                {/* ACTION TRIGGER BUTTONS ON HOVER */}
+                {/* ACTION TRIGGER BUTTONS ON HOVER / LONG-PRESS */}
                 {!isDeleted && (
-                  <div className="opacity-0 group-hover:opacity-100 transition flex items-center gap-1">
+                  <div className={`transition flex items-center gap-1 ${longPressActionId === msgKey ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}>
                     {onReplyMessage && (
                       <button
                         type="button"
-                        onClick={() => onReplyMessage(message)}
+                        onClick={(e) => { e.stopPropagation(); onReplyMessage(message); setLongPressActionId(null); }}
                         aria-label="Reply to this message"
                         className="h-7 w-7 rounded-full bg-zinc-800/90 hover:bg-zinc-700 text-zinc-300 hover:text-white flex items-center justify-center text-xs shadow-sm transition border border-zinc-700/60"
                         title="Reply"
@@ -224,11 +277,12 @@ export default function MessageList({
                     {onToggleReaction && message.id && (
                       <button
                         type="button"
-                        onClick={() =>
+                        onClick={(e) => {
+                          e.stopPropagation();
                           setActiveActionId((prev) =>
                             prev === message.id ? null : (message.id || null),
-                          )
-                        }
+                          );
+                        }}
                         aria-label="React to this message"
                         className="h-7 w-7 rounded-full bg-zinc-800/90 hover:bg-zinc-700 text-zinc-300 hover:text-white flex items-center justify-center text-xs shadow-sm transition border border-zinc-700/60"
                         title="React"
@@ -240,7 +294,7 @@ export default function MessageList({
                     {isMe && onDeleteMessage && message.id && (
                       <button
                         type="button"
-                        onClick={() => onDeleteMessage(message.id!)}
+                        onClick={(e) => { e.stopPropagation(); onDeleteMessage(message.id!); setLongPressActionId(null); }}
                         aria-label="Delete this message"
                         className="h-7 w-7 rounded-full bg-red-950/60 hover:bg-red-900/80 text-red-400 hover:text-red-300 flex items-center justify-center text-xs shadow-sm transition border border-red-800/50"
                         title="Delete"
