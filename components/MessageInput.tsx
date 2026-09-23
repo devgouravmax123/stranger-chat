@@ -337,66 +337,95 @@ export default function MessageInput({
       {/* ====================================== */}
 
       <div className="flex items-center gap-1.5 sm:gap-2">
-        {/* EMOJI */}
+        {/* EMOJI (Completely removed on mobile, available on desktop) */}
         <button
           type="button"
           onClick={() => setShowEmojiPicker((previous) => !previous)}
           disabled={disabled}
-          className="h-10 w-10 sm:h-11 sm:w-11 shrink-0 rounded-xl bg-zinc-800/90 hover:bg-zinc-700 border border-zinc-700/60 text-lg sm:text-xl transition disabled:cursor-not-allowed disabled:opacity-50 flex items-center justify-center text-zinc-200"
+          className="hidden sm:flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 rounded-xl bg-zinc-800/90 hover:bg-zinc-700 border border-zinc-700/60 text-lg sm:text-xl transition disabled:cursor-not-allowed disabled:opacity-50 items-center justify-center text-zinc-200"
           aria-label="Open emoji picker"
         >
           😊
         </button>
 
-        {/* PHOTO / MEDIA ATTACH */}
+        {/* PHOTO / MEDIA ATTACH (Hidden on mobile when user is typing or has entered text/file) */}
         <button
           type="button"
           onClick={handlePhotoClick}
           disabled={disabled}
-          className="h-10 w-10 sm:h-11 sm:w-11 shrink-0 rounded-xl bg-zinc-800/90 hover:bg-zinc-700 border border-zinc-700/60 text-lg sm:text-xl transition disabled:cursor-not-allowed disabled:opacity-50 flex items-center justify-center text-zinc-200"
+          className={`${
+            message.length > 0 || attachedFile ? "hidden sm:flex" : "flex"
+          } h-10 w-10 sm:h-11 sm:w-11 shrink-0 rounded-xl bg-zinc-800/90 hover:bg-zinc-700 border border-zinc-700/60 text-lg sm:text-xl transition disabled:cursor-not-allowed disabled:opacity-50 items-center justify-center text-zinc-200`}
           title="Send photo"
           aria-label="Upload photo"
         >
           📷
         </button>
 
-        {/* VOICE */}
-        <VoiceRecorder
-          onRecorded={handleVoiceRecorded}
-          disabled={disabled || isVoiceDisabled}
-          disabledReason={voiceDisabledReason}
-        />
+        {/* VOICE RECORDER (Hidden on mobile when user is typing or has entered text/file) */}
+        <div className={message.length > 0 || attachedFile ? "hidden sm:block shrink-0" : "shrink-0"}>
+          <VoiceRecorder
+            onRecorded={handleVoiceRecorded}
+            disabled={disabled || isVoiceDisabled}
+            disabledReason={voiceDisabledReason}
+          />
+        </div>
 
-        {/* TEXT */}
-        <input
-          type="text"
-          aria-label={
-            attachedFile
-              ? "Add a caption"
-              : replyingTo
-              ? "Type your reply"
-              : "Type a message"
-          }
-          placeholder={
-            attachedFile
-              ? "Add a caption (optional)..."
-              : replyingTo
-              ? "Type your reply..."
-              : "Type a message..."
-          }
-          value={message}
-          onChange={handleInputChange}
-          onKeyDown={handleKeyDown}
-          disabled={disabled}
-          className="min-w-0 flex-1 rounded-xl bg-zinc-950 border border-zinc-700/80 px-3 sm:px-4 py-2.5 sm:py-3 text-sm text-white placeholder-zinc-500 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 disabled:bg-zinc-900 transition"
-        />
+        {/* TEXT INPUT CONTAINER (Expands across full available width with embedded mobile send arrow) */}
+        <div className="relative min-w-0 flex-1 flex items-center">
+          <input
+            type="text"
+            aria-label={
+              attachedFile
+                ? "Add a caption"
+                : replyingTo
+                ? "Type your reply"
+                : "Type a message"
+            }
+            placeholder={
+              attachedFile
+                ? "Add a caption (optional)..."
+                : replyingTo
+                ? "Type your reply..."
+                : "Type a message..."
+            }
+            value={message}
+            onChange={handleInputChange}
+            onKeyDown={handleKeyDown}
+            disabled={disabled}
+            className={`w-full rounded-xl bg-zinc-950 border border-zinc-700/80 px-3 sm:px-4 py-2.5 sm:py-3 text-sm text-white placeholder-zinc-500 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 disabled:bg-zinc-900 transition ${
+              message.trim() !== "" || attachedFile ? "pr-10 sm:pr-4" : ""
+            }`}
+          />
 
-        {/* SEND */}
+          {/* MOBILE INTEGRATED SEND ARROW BUTTON */}
+          {(message.trim() !== "" || attachedFile) && (
+            <button
+              type="button"
+              onClick={handleSend}
+              disabled={disabled}
+              className="sm:hidden absolute right-1.5 flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-600 text-white shadow-sm active:scale-95 transition hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Send message"
+              aria-label="Send message"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                className="w-4 h-4"
+              >
+                <path d="M3.105 2.289a.75.75 0 00-.826.95l1.414 4.925A1.5 1.5 0 004.978 9.25h4.772a.75.75 0 010 1.5H4.978a1.5 1.5 0 00-1.285 1.086l-1.414 4.925a.75.75 0 00.826.95 28.896 28.896 0 0015.293-7.154.75.75 0 000-1.112A28.896 28.896 0 003.105 2.289z" />
+              </svg>
+            </button>
+          )}
+        </div>
+
+        {/* DESKTOP SEND BUTTON (Hidden on mobile, preserved on desktop) */}
         <button
           type="button"
           onClick={handleSend}
           disabled={disabled || (!attachedFile && message.trim() === "")}
-          className="rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 px-3.5 sm:px-5 py-2.5 sm:py-3 font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-40 shrink-0 text-sm shadow-sm active:scale-95"
+          className="hidden sm:inline-flex rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 px-3.5 sm:px-5 py-2.5 sm:py-3 font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-40 shrink-0 text-sm shadow-sm active:scale-95 items-center justify-center"
         >
           Send
         </button>
