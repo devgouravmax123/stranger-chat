@@ -19,7 +19,7 @@ export class GeminiService {
   private readonly modelName: string;
 
   constructor() {
-    this.modelName = process.env.GEMINI_MODEL?.trim() || 'gemini-3.1-flash-lite';
+    this.modelName = process.env.GEMINI_MODEL?.trim() || 'gemini-3-flash-preview';
 
     let envPathLoaded = 'none';
     const candidateEnvPaths = [
@@ -162,13 +162,13 @@ Example format:
     this.logger.log(`[AI Suggestions] Calling Gemini...`);
     this.logger.log(`[AI Suggestions] calling Gemini: ${this.modelName}`);
 
-    try {
+    const callModelWithTimeout = async (modelToUse: string): Promise<string> => {
       const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('GEMINI_TIMEOUT')), 10000),
       );
 
-      const callPromise = this.client.models.generateContent({
-        model: this.modelName,
+      const callPromise = this.client!.models.generateContent({
+        model: modelToUse,
         contents: userPrompt,
         config: {
           systemInstruction,
@@ -178,7 +178,23 @@ Example format:
       });
 
       const response = await Promise.race([callPromise, timeoutPromise]);
-      const responseText = response.text?.trim();
+      return response.text?.trim() || '';
+    };
+
+    try {
+      let responseText = '';
+      try {
+        responseText = await callModelWithTimeout(this.modelName);
+      } catch (primaryErr: any) {
+        // If primary model experiences 503 high demand, 404, or transient error, retry with stable fallback model
+        const fallbackModel = 'gemini-3.6-flash';
+        if (this.modelName !== fallbackModel) {
+          this.logger.warn(`[AI Suggestions] Primary model ${this.modelName} failed (${primaryErr.message}). Retrying with ${fallbackModel}...`);
+          responseText = await callModelWithTimeout(fallbackModel);
+        } else {
+          throw primaryErr;
+        }
+      }
 
       this.logger.log(`[AI Suggestions] Gemini success`);
       this.logger.log(`[AI Suggestions] Gemini success: true`);

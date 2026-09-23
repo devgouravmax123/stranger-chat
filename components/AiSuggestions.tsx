@@ -114,12 +114,16 @@ export default function AiSuggestions({
     // Capture match ID to guard against async race conditions
     const activeMatchId = conversationId;
 
-    // Resolve authentic user ID (prefer prop, fallback to sessionStorage)
+    // Resolve authentic user ID (prefer prop, fallback to session/local storage)
     const activeUserId =
       currentUserId && currentUserId !== "me" && currentUserId !== "anonymous"
         ? currentUserId
         : typeof window !== "undefined"
-        ? sessionStorage.getItem("sc_user_id") || sessionStorage.getItem("sc_session_user_id") || undefined
+        ? sessionStorage.getItem("sc_user_id") ||
+          sessionStorage.getItem("sc_session_user_id") ||
+          localStorage.getItem("sc_auth_user_id") ||
+          localStorage.getItem("sc_last_user_id") ||
+          undefined
         : undefined;
 
     // STATE 4: Generating...
