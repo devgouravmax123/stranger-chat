@@ -189,7 +189,7 @@ describe('ChatGateway - Phase 3 Step 2 Backend E2EE Transport & Storage', () => 
         findMany: vi.fn(),
       },
       chat: {
-        findUnique: vi.fn(),
+        findUnique: vi.fn().mockResolvedValue({ endedAt: null }),
         findFirst: vi.fn(),
       },
       user: {
@@ -449,13 +449,13 @@ describe('ChatGateway - Phase 3 Step 2 Backend E2EE Transport & Storage', () => 
 
       // Legacy item verification
       expect(formatted[0].id).toBe('legacy-1');
-      expect(formatted[0].text).toBe('Historical plaintext message');
+      expect((formatted[0] as any).text).toBe('Historical plaintext message');
       expect((formatted[0] as any).envelope).toBeUndefined();
 
       // E2EE item verification
       expect(formatted[1].id).toBe('e2ee-1');
-      expect(formatted[1].envelope).toEqual(validEnvelope);
-      expect(formatted[1].text).toBeUndefined();
+      expect((formatted[1] as any).envelope).toEqual(validEnvelope);
+      expect((formatted[1] as any).text).toBeUndefined();
 
       // E2EE reply verification: opaque content string, NO plaintext text
       expect(formatted[1].replyTo).toEqual({
@@ -875,9 +875,9 @@ describe('ChatGateway - Phase 3 Step 2 Backend E2EE Transport & Storage', () => 
         expect(formatted).toHaveLength(1);
 
         expect(formatted[0].id).toBe('hist-img-1');
-        expect(formatted[0].envelope).toEqual(validImageEnvelope);
+        expect((formatted[0] as any).envelope).toEqual(validImageEnvelope);
         expect(formatted[0].type).toBe('image');
-        expect(formatted[0].text).toBeUndefined();
+        expect((formatted[0] as any).text).toBeUndefined();
 
         expect(formatted[0].replyTo).toEqual({
           id: 'target-audio-msg',
@@ -889,5 +889,85 @@ describe('ChatGateway - Phase 3 Step 2 Backend E2EE Transport & Storage', () => 
       });
     });
   });
+
+  describe('Bug 1 & Bug 2 Fixes Verification', () => {
+    it('Bug 1: should filter out blocked and reported users bidirectionally from ineligible list', async () => {
+      const userId = 'user-current';
+      mockPrisma.block = {
+        findMany: vi.fn().mockResolvedValue([
+          { blockerId: userId, blockedId: 'blocked-by-me' },
+          { blockerId: 'blocked-me', blockedId: userId },
+        ]),
+      };
+      mockPrisma.report = {
+        findMany: vi.fn().mockResolvedValue([
+          { reporterId: userId, reportedId: 'reported-by-me' },
+          { reporterId: 'reported-me', reportedId: userId },
+        ]),
+      };
+
+      const set = await gateway['getIneligibleUserIds'](userId);
+      expect(set.has('blocked-by-me')).toBe(true);
+      expect(set.has('blocked-me')).toBe(true);
+      expect(set.has('reported-by-me')).toBe(true);
+      expect(set.has('reported-me')).toBe(true);
+      expect(set.has(userId)).toBe(false);
+      expect(set.size).toBe(4);
+    });
+
+    it('Bug 1: areUsersIneligible returns true if either user blocked or reported the other', async () => {
+      mockPrisma.block = {
+        findFirst: vi.fn().mockResolvedValueOnce({ id: 'block-1' }),
+      };
+      mockPrisma.report = {
+        findFirst: vi.fn().mockResolvedValueOnce(null),
+      };
+
+      const result1 = await gateway['areUsersIneligible']('user-a', 'user-b');
+      expect(result1).toBe(true);
+
+      mockPrisma.block.findFirst.mockResolvedValueOnce(null);
+      mockPrisma.report.findFirst.mockResolvedValueOnce({ id: 'report-1' });
+
+      const result2 = await gateway['areUsersIneligible']('user-a', 'user-b');
+      expect(result2).toBe(true);
+
+      mockPrisma.block.findFirst.mockResolvedValueOnce(null);
+      mockPrisma.report.findFirst.mockResolvedValueOnce(null);
+
+      const result3 = await gateway['areUsersIneligible']('user-a', 'user-b');
+      expect(result3).toBe(false);
+    });
+
+    it('Bug 2: handleEndChat calls leaveChat with ended', async () => {
+      const socket = createMockSocket('sock-end-test');
+      const leaveChatSpy = vi.spyOn(gateway as any, 'leaveChat').mockResolvedValue(undefined);
+
+      await gateway.handleEndChat(socket);
+      expect(leaveChatSpy).toHaveBeenCalledWith(socket, 'ended');
+    });
+
+    it('Bug 2: sendMessage rejects messages if chat is already ended', async () => {
+      const socket = createMockSocket('sock-ended-chat');
+      const roomId = 'room-ended';
+      const userId = 'user-alice';
+      const chatId = 'chat-ended-123';
+
+      mockRedis.getSocketMapping.mockResolvedValue({ roomId, userId, chatId });
+      mockPrisma.chat.findUnique.mockResolvedValue({ endedAt: new Date() });
+
+      await gateway.sendMessage(socket, {
+        clientId: 'client-msg-ended',
+        text: 'Hello stranger',
+      });
+
+      expect(mockPrisma.message.create).not.toHaveBeenCalled();
+      expect(socket.emit).toHaveBeenCalledWith('message_error', {
+        clientId: 'client-msg-ended',
+        message: 'Chat has ended',
+      });
+    });
+  });
 });
+
 

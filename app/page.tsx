@@ -927,28 +927,66 @@ export default function Home() {
       setStrangerStatus("online");
     });
 
-    newSocket.on("stranger_offline", (data?: { roomId?: string }) => {
-      // Ignore if event does not belong to currently active stranger session
-      if (!strangerRoomIdRef.current) return;
-      if (data?.roomId && data.roomId !== strangerRoomIdRef.current) return;
+    const handleStrangerDisconnection = (noticeMsg = "Stranger disconnected.") => {
+      // 1. Immediately tear down any active WebRTC video call
+      videoCallTeardownRef.current?.();
+      setIsVideoChatOpen(false);
+      setUnreadVideoChatCount(0);
+
+      // 2. Clear matching timers & crypto key cache
+      clearMatchingTimers();
+      clearConversationKeyCache();
+      setStrangerPublicKey(null);
+      strangerPublicKeyRef.current = null;
+
+      // 3. Clear active stranger chat state
+      setMessages([]);
+      setReplyingTo(null);
+      setStrangerTyping(false);
+      setMatchScore(null);
+      setStrangerRoomId(null);
+      strangerRoomIdRef.current = null;
+      setStrangerChatId(null);
+      strangerChatIdRef.current = null;
+      setStrangerUserId(null);
+      setFriendRequestSent(false);
+      setFriendRequestMessage("");
+      setIsSendingFriendRequest(false);
+      setIsAlreadyFriend(false);
+      setMessage("");
+      setViewProfile(null);
+      setWaiting(false);
+      setMatchingMode("idle");
+      setSearchElapsedSeconds(0);
       setStrangerStatus("disconnected");
-    });
 
-    newSocket.on("stranger_left", (data?: { roomId?: string }) => {
-      if (!strangerRoomIdRef.current) return;
-      if (data?.roomId && data.roomId !== strangerRoomIdRef.current) return;
-      if (strangerStatusRef.current === "disconnected") return;
-
-      setStrangerStatus("disconnected");
-      showNotification("Stranger left the chat.");
-
-      // Clear any pending stranger notifications for this ended chat
+      // 4. Clear pending stranger notifications
       setNotifications((prev) => {
         const remaining = prev.filter((n) => n.type !== "STRANGER_MESSAGE");
         const diff = prev.length - remaining.length;
         if (diff > 0) setUnreadNotificationsCount((c) => Math.max(0, c - diff));
         return remaining;
       });
+
+      // 5. Show toast notification
+      showNotification(noticeMsg);
+
+      // 6. If currently on stranger-chat view, return to Find Stranger matching home state
+      if (currentViewRef.current === "stranger-chat") {
+        navigateTo("matching");
+      }
+    };
+
+    newSocket.on("stranger_offline", (data?: { roomId?: string }) => {
+      if (!strangerRoomIdRef.current) return;
+      if (data?.roomId && data.roomId !== strangerRoomIdRef.current) return;
+      handleStrangerDisconnection("Stranger disconnected.");
+    });
+
+    newSocket.on("stranger_left", (data?: { roomId?: string }) => {
+      if (!strangerRoomIdRef.current) return;
+      if (data?.roomId && data.roomId !== strangerRoomIdRef.current) return;
+      handleStrangerDisconnection("Stranger disconnected.");
     });
 
     newSocket.on("stranger_skipped", (data?: { roomId?: string }) => {
@@ -957,6 +995,10 @@ export default function Home() {
       if (strangerStatusRef.current === "disconnected") return;
 
       setStrangerStatus("disconnected");
+      setStrangerRoomId(null);
+      strangerRoomIdRef.current = null;
+      setStrangerChatId(null);
+      strangerChatIdRef.current = null;
       showNotification("Stranger skipped to the next person.");
 
       // Clear any pending stranger notifications for this ended chat
@@ -973,6 +1015,10 @@ export default function Home() {
       if (data?.roomId && data.roomId !== strangerRoomIdRef.current) return;
 
       setStrangerStatus("disconnected");
+      setStrangerRoomId(null);
+      strangerRoomIdRef.current = null;
+      setStrangerChatId(null);
+      strangerChatIdRef.current = null;
       showNotification("Stranger has been blocked.");
 
       // Clear any pending stranger notifications for this ended chat
@@ -2216,6 +2262,7 @@ export default function Home() {
     setStrangerTyping(false);
     setMatchScore(null);
     setStrangerRoomId(null);
+    strangerRoomIdRef.current = null;
     setStrangerChatId(null);
     strangerChatIdRef.current = null;
     setStrangerUserId(null);
@@ -2263,7 +2310,7 @@ export default function Home() {
   // ==========================================
 
   const sendStrangerMessage = async () => {
-    if (!socket || message.trim() === "") return;
+    if (!socket || message.trim() === "" || strangerStatus === "disconnected" || !strangerRoomIdRef.current) return;
 
     const activeChatId = strangerChatIdRef.current;
     const peerKey = strangerPublicKeyRef.current;
@@ -2574,11 +2621,37 @@ export default function Home() {
 
   const handleReportSubmit = (reason: string, description: string) => {
     if (!socket) return;
+    videoCall.teardownCall();
+    setIsVideoChatOpen(false);
+    setUnreadVideoChatCount(0);
+    clearMatchingTimers();
+    clearConversationKeyCache();
+    setStrangerPublicKey(null);
+    strangerPublicKeyRef.current = null;
     socket.emit("report_stranger", {
       reportedUserId: strangerUserId,
       reason,
       description,
     });
+    setMessages([]);
+    setReplyingTo(null);
+    setStrangerTyping(false);
+    setMatchScore(null);
+    setStrangerRoomId(null);
+    strangerRoomIdRef.current = null;
+    setStrangerChatId(null);
+    strangerChatIdRef.current = null;
+    setStrangerUserId(null);
+    setFriendRequestSent(false);
+    setFriendRequestMessage("");
+    setIsSendingFriendRequest(false);
+    setIsAlreadyFriend(false);
+    setMessage("");
+    setViewProfile(null);
+    setWaiting(false);
+    setMatchingMode("idle");
+    setSearchElapsedSeconds(0);
+    navigateTo("matching");
   };
 
   const handleBlockStranger = () => {

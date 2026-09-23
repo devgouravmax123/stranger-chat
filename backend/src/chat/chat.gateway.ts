@@ -423,18 +423,8 @@ export class ChatGateway implements OnGatewayInit {
       goal: preferences?.goal || currentUserProfile?.goal || 'casual-chat',
     };
 
-    // Get list of blocked user IDs for current user
-    const blocks = await this.prisma.block.findMany({
-      where: {
-        OR: [{ blockerId: userId }, { blockedId: userId }],
-      },
-      select: { blockerId: true, blockedId: true },
-    });
-    const blockedUserIds = new Set<string>();
-    blocks.forEach((b) => {
-      blockedUserIds.add(b.blockerId);
-      blockedUserIds.add(b.blockedId);
-    });
+    // Get list of ineligible (blocked or reported) user IDs for current user
+    const ineligibleUserIds = await this.getIneligibleUserIds(userId);
 
     // Clean up any stale active chat before initiating new matchmaking
     const currentContext = await this.getSocketContext(socket);
@@ -474,8 +464,8 @@ export class ChatGateway implements OnGatewayInit {
           continue;
         }
 
-        // Blocked user check
-        if (blockedUserIds.has(candidate.userId)) {
+        // Ineligible (blocked or reported) user check
+        if (ineligibleUserIds.has(candidate.userId)) {
           unmatchableCandidates.push(candidate);
           continue;
         }
@@ -536,7 +526,7 @@ export class ChatGateway implements OnGatewayInit {
       if (
         candidateUserId &&
         candidateUserId !== userId &&
-        !blockedUserIds.has(candidateUserId)
+        !ineligibleUserIds.has(candidateUserId)
       ) {
         matchIndex = i;
         break;
@@ -684,6 +674,59 @@ export class ChatGateway implements OnGatewayInit {
     this.server.to(roomId).emit('stranger_online');
   }
 
+  private async getIneligibleUserIds(userId: string): Promise<Set<string>> {
+    const [blocks, reports] = await Promise.all([
+      this.prisma.block.findMany({
+        where: {
+          OR: [{ blockerId: userId }, { blockedId: userId }],
+        },
+        select: { blockerId: true, blockedId: true },
+      }),
+      this.prisma.report.findMany({
+        where: {
+          OR: [{ reporterId: userId }, { reportedId: userId }],
+        },
+        select: { reporterId: true, reportedId: true },
+      }),
+    ]);
+
+    const set = new Set<string>();
+    for (const b of blocks) {
+      set.add(b.blockerId);
+      set.add(b.blockedId);
+    }
+    for (const r of reports) {
+      set.add(r.reporterId);
+      set.add(r.reportedId);
+    }
+    set.delete(userId);
+    return set;
+  }
+
+  private async areUsersIneligible(userAId: string, userBId: string): Promise<boolean> {
+    const [block, report] = await Promise.all([
+      this.prisma.block.findFirst({
+        where: {
+          OR: [
+            { blockerId: userAId, blockedId: userBId },
+            { blockerId: userBId, blockedId: userAId },
+          ],
+        },
+        select: { id: true },
+      }),
+      this.prisma.report.findFirst({
+        where: {
+          OR: [
+            { reporterId: userAId, reportedId: userBId },
+            { reporterId: userBId, reportedId: userAId },
+          ],
+        },
+        select: { id: true },
+      }),
+    ]);
+    return Boolean(block || report);
+  }
+
   private async sweepWaitingQueue() {
     if (!this.redis.getIsConnected()) return;
     try {
@@ -694,7 +737,15 @@ export class ChatGateway implements OnGatewayInit {
         if (userA && userB) {
           const sockA = this.server.sockets.sockets.get(userA.socketId);
           const sockB = this.server.sockets.sockets.get(userB.socketId);
-          if (sockA && sockA.connected && sockB && sockB.connected && userA.userId !== userB.userId) {
+          const areIneligible = await this.areUsersIneligible(userA.userId, userB.userId);
+          if (
+            sockA &&
+            sockA.connected &&
+            sockB &&
+            sockB.connected &&
+            userA.userId !== userB.userId &&
+            !areIneligible
+          ) {
             await this.createAndEmitMatch(sockA, userA.userId, userA.preferences, sockB, userB.userId, userB.preferences);
           } else {
             if (sockA && sockA.connected) await this.redis.pushWaitingUser(userA);
@@ -794,6 +845,20 @@ export class ChatGateway implements OnGatewayInit {
 
     const { roomId, userId, chatId } = await this.getSocketContext(socket);
     if (!roomId || !userId || !chatId) return;
+
+    const chatRecord = await this.prisma.chat.findUnique({
+      where: { id: chatId },
+      select: { endedAt: true },
+    });
+    if (!chatRecord || chatRecord.endedAt) {
+      if (data?.clientId) {
+        socket.emit('message_error', {
+          clientId: data.clientId,
+          message: 'Chat has ended',
+        });
+      }
+      return;
+    }
 
     let content: string | null = null;
     let isE2EE = false;
@@ -958,6 +1023,20 @@ export class ChatGateway implements OnGatewayInit {
       return;
     }
 
+    const chatRecord = await this.prisma.chat.findUnique({
+      where: { id: chatId },
+      select: { endedAt: true },
+    });
+    if (!chatRecord || chatRecord.endedAt) {
+      if (data?.clientId) {
+        socket.emit('voice_message_error', {
+          clientId: data.clientId,
+          message: 'Chat has ended',
+        });
+      }
+      return;
+    }
+
     const content = `audio:${data.audioData}`;
     const replyToId = data.replyToId || null;
 
@@ -1023,6 +1102,20 @@ export class ChatGateway implements OnGatewayInit {
         socket.emit('image_message_error', {
           clientId: data.clientId,
           message: "Photo couldn't be sent. Please try again.",
+        });
+      }
+      return;
+    }
+
+    const chatRecord = await this.prisma.chat.findUnique({
+      where: { id: chatId },
+      select: { endedAt: true },
+    });
+    if (!chatRecord || chatRecord.endedAt) {
+      if (data?.clientId) {
+        socket.emit('image_message_error', {
+          clientId: data.clientId,
+          message: 'Chat has ended',
         });
       }
       return;
@@ -1366,6 +1459,7 @@ export class ChatGateway implements OnGatewayInit {
     socket.emit('report_submitted', {
       message: 'Report submitted. Thank you for keeping Stranger Chat safe.',
     });
+    await this.leaveChat(socket, 'ended');
   }
 
   @SubscribeMessage('block_stranger')
@@ -2189,6 +2283,11 @@ export class ChatGateway implements OnGatewayInit {
     }
   }
 
+  @SubscribeMessage('end_chat')
+  async handleEndChat(@ConnectedSocket() socket: Socket) {
+    await this.leaveChat(socket, 'ended');
+  }
+
   // ==========================================
   // DISCONNECT & LEAVE HELPERS
   // ==========================================
@@ -2206,6 +2305,23 @@ export class ChatGateway implements OnGatewayInit {
         callId: activeCall.callId,
         reason,
       });
+    }
+
+    // Determine peer socket ID if available
+    let peerSocketId: string | null = null;
+    if (this.redis.getIsConnected() && typeof this.redis.getMatchState === 'function') {
+      const matchState = await this.redis.getMatchState(roomId);
+      if (matchState) {
+        peerSocketId = matchState.userASocketId === socket.id ? matchState.userBSocketId : matchState.userASocketId;
+      }
+    }
+    if (!peerSocketId) {
+      for (const [sId, rId] of Array.from(this.inMemoryUserRooms.entries())) {
+        if (rId === roomId && sId !== socket.id) {
+          peerSocketId = sId;
+          break;
+        }
+      }
     }
 
     // Notify stranger of exit reason with roomId identity
@@ -2245,9 +2361,24 @@ export class ChatGateway implements OnGatewayInit {
       await this.redis.removeMatchState(roomId);
       await this.redis.setPresence(socket.id, 'online');
       await this.redis.setSocketMapping(socket.id, { roomId: undefined, chatId: undefined });
+      if (peerSocketId && peerSocketId !== socket.id) {
+        await this.redis.setPresence(peerSocketId, 'online');
+        await this.redis.setSocketMapping(peerSocketId, { roomId: undefined, chatId: undefined });
+      }
     } else {
       this.inMemoryUserRooms.delete(socket.id);
       this.inMemorySocketChats.delete(socket.id);
+      if (peerSocketId && peerSocketId !== socket.id) {
+        this.inMemoryUserRooms.delete(peerSocketId);
+        this.inMemorySocketChats.delete(peerSocketId);
+      }
+    }
+
+    if (peerSocketId && peerSocketId !== socket.id) {
+      const peerSocket = this.server?.sockets?.sockets?.get?.(peerSocketId);
+      if (peerSocket) {
+        peerSocket.leave(roomId);
+      }
     }
   }
 
