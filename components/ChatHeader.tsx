@@ -5,6 +5,7 @@ import { useState } from "react";
 type ChatHeaderProps = {
   status?: "online" | "offline" | "connecting" | "disconnected";
   onViewProfile: () => void;
+  strangerAvatar?: string | null;
   onSkip?: () => void;
   onReport?: () => void;
   onBlock?: () => void;
@@ -18,6 +19,7 @@ type ChatHeaderProps = {
 export default function ChatHeader({
   status = "online",
   onViewProfile,
+  strangerAvatar = null,
   onSkip,
   onReport,
   onBlock,
@@ -55,7 +57,7 @@ export default function ChatHeader({
             type="button"
             onClick={onToggleSidebar}
             aria-label="Toggle Sidebar Navigation (Chat)"
-            className="h-8 w-8 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 hover:text-white flex items-center justify-center text-sm font-mono border border-zinc-700/50 transition active:scale-95 shrink-0"
+            className="hidden md:flex h-8 w-8 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 hover:text-white items-center justify-center text-sm font-mono border border-zinc-700/50 transition active:scale-95 shrink-0"
             title="Toggle Sidebar"
           >
             ☰
@@ -71,12 +73,24 @@ export default function ChatHeader({
             ← Back
           </button>
         )}
-        <div className="min-w-0">
-          <h1 className="text-sm font-bold text-white leading-tight truncate">
-            Stranger Chat
-          </h1>
-          <div className="text-[11px] mt-0.5">{getStatusBadge()}</div>
-        </div>
+        <button
+          type="button"
+          onClick={onViewProfile}
+          className="flex items-center gap-2 min-w-0 text-left hover:opacity-85 transition group"
+          title="View profile"
+        >
+          {strangerAvatar && (
+            <span className="w-8 h-8 rounded-full bg-zinc-800 border border-zinc-700/60 flex items-center justify-center text-base shrink-0 group-hover:border-zinc-500 transition">
+              {strangerAvatar}
+            </span>
+          )}
+          <div className="min-w-0">
+            <h1 className="text-sm font-bold text-white leading-tight truncate group-hover:text-indigo-300 transition">
+              Stranger Chat
+            </h1>
+            <div className="text-[11px] mt-0.5">{getStatusBadge()}</div>
+          </div>
+        </button>
       </div>
 
       <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
@@ -116,7 +130,7 @@ export default function ChatHeader({
             onClick={onSkip}
             title="Skip to next stranger"
             aria-label="Next stranger"
-            className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white text-xs font-semibold shadow-sm transition active:scale-95"
+            className="hidden md:flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white text-xs font-semibold shadow-sm transition active:scale-95"
           >
             <span className="hidden xs:inline">Next</span>
             <span>⏭</span>

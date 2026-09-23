@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import AudioPlayer from "./AudioPlayer";
 import ImageLightboxModal from "./ImageLightboxModal";
 
@@ -57,6 +57,31 @@ export default function MessageList({
   // Long-press refs
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
+
+  // Auto-scroll refs
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const isNearBottomRef = useRef(true);
+
+  // Track if user is near the bottom
+  const handleScroll = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const threshold = 120; // px from bottom
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    isNearBottomRef.current = distanceFromBottom <= threshold;
+  }, []);
+
+  // Smart auto-scroll: immediately scroll to bottom on own sent message or if already near bottom
+  useEffect(() => {
+    if (messages.length === 0) return;
+    const lastMsg = messages[messages.length - 1];
+    const isMe = lastMsg.sender === "me";
+
+    if (isMe || isNearBottomRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages]);
 
   const clearLongPress = useCallback(() => {
     if (longPressTimerRef.current) {
@@ -125,6 +150,8 @@ export default function MessageList({
 
   return (
     <div
+      ref={scrollContainerRef}
+      onScroll={handleScroll}
       className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3"
       onClick={() => { setLongPressActionId(null); setActiveActionId(null); }}
     >
@@ -372,6 +399,9 @@ export default function MessageList({
           );
         })
       )}
+
+      {/* BOTTOM SCROLL ANCHOR */}
+      <div ref={messagesEndRef} className="h-0 w-0 shrink-0" aria-hidden="true" />
 
       {/* LIGHTBOX MODAL */}
       <ImageLightboxModal

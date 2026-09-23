@@ -3606,7 +3606,13 @@ export default function Home() {
       {notificationBanner}
 
       {/* TOP APPLICATION HEADER (☰ Hamburger, Brand, New Chat, Profile, Notifications, Online status) */}
-      <div className="relative z-20 shrink-0">
+      <div
+        className={`relative z-20 shrink-0 ${
+          currentView === "stranger-chat" || currentView === "friend-chat"
+            ? "hidden md:block"
+            : ""
+        }`}
+      >
         <AppHeader
           onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
           onNewChat={() => {
@@ -4002,6 +4008,7 @@ export default function Home() {
             <div className="flex-1 flex flex-col h-full w-full max-w-5xl mx-auto bg-zinc-900 sm:border-x border-zinc-800/80 shadow-2xl overflow-hidden">
               <ChatHeader
                 onViewProfile={() => openUserProfile(strangerUserId)}
+                strangerAvatar={viewProfile?.avatar || "👤"}
                 onBack={handleExitStrangerChat}
                 onSkip={handleNextStranger}
                 onReport={() => setIsReportOpen(true)}
@@ -4059,16 +4066,16 @@ export default function Home() {
               ) : (
                 /* NORMAL FULL-SIZE TEXT CHAT MODE */
                 <div className="flex-1 flex flex-col min-h-0">
-                  {/* Compatibility score */}
+                  {/* Compatibility score (moved into UserProfileModal for mobile; kept on desktop) */}
                   {matchScore !== null && (
-                    <div className="text-center py-1.5 bg-zinc-950/80 text-xs font-semibold text-zinc-400 border-b border-zinc-800/80">
+                    <div className="hidden sm:block text-center py-1.5 bg-zinc-950/80 text-xs font-semibold text-zinc-400 border-b border-zinc-800/80">
                       Match compatibility:{" "}
                       <span className="text-indigo-400 font-bold">{Math.round(matchScore)}%</span>
                     </div>
                   )}
 
-                  {/* Add Friend Banner */}
-                  <div className="px-4 py-2 border-b border-zinc-800/80 bg-zinc-950/60 flex items-center justify-between shrink-0">
+                  {/* Add Friend Banner (integrated into UserProfileModal for mobile; kept on desktop) */}
+                  <div className="hidden sm:flex px-4 py-2 border-b border-zinc-800/80 bg-zinc-950/60 items-center justify-between shrink-0">
                     {isAlreadyFriend ? (
                       <div className="w-full text-center bg-indigo-950/40 border border-indigo-800/50 text-indigo-300 py-1.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5">
                         <span>✓</span>
@@ -4095,18 +4102,18 @@ export default function Home() {
                   {/* Full size message list and composer */}
                   {strangerChatBody}
 
-                  {/* Action Footer: Next Stranger & End Chat */}
+                  {/* Action Footer: Next Stranger & End Chat (compacted to preserve vertical screen space) */}
                   <div className="grid grid-cols-2 border-t border-zinc-800/90 divide-x divide-zinc-800/90 bg-zinc-900 shrink-0 safe-bottom">
                     <button
                       onClick={handleNextStranger}
-                      className="py-2.5 sm:py-3 text-xs sm:text-sm font-semibold text-indigo-400 hover:bg-zinc-800 transition flex items-center justify-center gap-1.5 active:scale-95"
+                      className="py-2 sm:py-2.5 text-xs sm:text-sm font-semibold text-indigo-400 hover:bg-zinc-800 transition flex items-center justify-center gap-1.5 active:scale-95"
                     >
                       <span>⏭️</span>
                       <span>Next Stranger</span>
                     </button>
                     <button
                       onClick={handleExitStrangerChat}
-                      className="py-2.5 sm:py-3 text-xs sm:text-sm font-semibold text-rose-400 hover:bg-zinc-800 transition flex items-center justify-center gap-1.5 active:scale-95"
+                      className="py-2 sm:py-2.5 text-xs sm:text-sm font-semibold text-rose-400 hover:bg-zinc-800 transition flex items-center justify-center gap-1.5 active:scale-95"
                     >
                       <span>✕</span>
                       <span>End Chat</span>
@@ -4409,7 +4416,23 @@ export default function Home() {
       )}
 
       {/* User Profile Viewing Modal */}
-      <UserProfileModal user={viewProfile} onClose={() => setViewProfile(null)} />
+      <UserProfileModal
+        user={viewProfile}
+        onClose={() => setViewProfile(null)}
+        matchScore={
+          currentView === "stranger-chat" && viewProfile?.id === strangerUserId
+            ? matchScore
+            : null
+        }
+        onAddFriend={
+          currentView === "stranger-chat" && strangerUserId && viewProfile?.id === strangerUserId
+            ? sendFriendRequest
+            : undefined
+        }
+        isAlreadyFriend={isAlreadyFriend}
+        friendRequestSent={friendRequestSent}
+        isSendingFriendRequest={isSendingFriendRequest}
+      />
     </div>
   );
 }
