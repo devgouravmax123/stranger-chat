@@ -19,9 +19,13 @@ import { corsOptions } from '../common/cors.config.js';
 import {
   BackendE2EEMessageEnvelope,
   BackendE2EEMediaEnvelope,
+  BackendE2EEMediaV1Envelope,
+  BackendE2EEMediaV2Envelope,
   BackendE2EEAnyEnvelope,
   isValidE2EEEnvelope,
   isValidE2EEMediaEnvelope,
+  isValidE2EEMediaV1Envelope,
+  isValidE2EEMediaV2Envelope,
   parseE2EEEnvelope,
   parseE2EEMediaEnvelope,
   parseE2EEAnyEnvelope,
@@ -1009,7 +1013,39 @@ export class ChatGateway implements OnGatewayInit {
     let validEnvelope: BackendE2EEAnyEnvelope | null = null;
 
     if (data?.envelope) {
-      if (isValidE2EEMediaEnvelope(data.envelope)) {
+      if (isValidE2EEMediaV2Envelope(data.envelope)) {
+        // Validate media attachment in database
+        const attachment = await this.prisma.mediaAttachment.findUnique({
+          where: { id: data.envelope.mediaId },
+        });
+
+        if (
+          !attachment ||
+          attachment.chatId !== chatId ||
+          attachment.senderId !== userId ||
+          attachment.messageId !== null ||
+          attachment.storageKey !== data.envelope.storageKey
+        ) {
+          socket.emit('message_error', {
+            clientId: data.clientId,
+            message: 'Invalid or unauthorized media attachment',
+          });
+          return;
+        }
+
+        validEnvelope = {
+          e2ee: true,
+          v: 2,
+          type: data.envelope.type,
+          mediaId: data.envelope.mediaId,
+          storageKey: data.envelope.storageKey,
+          mime: data.envelope.mime,
+          iv: data.envelope.iv,
+          fileSize: data.envelope.fileSize,
+        };
+        content = JSON.stringify(validEnvelope);
+        isE2EE = true;
+      } else if (isValidE2EEMediaV1Envelope(data.envelope)) {
         validEnvelope = {
           e2ee: true,
           v: 1,
@@ -1061,6 +1097,14 @@ export class ChatGateway implements OnGatewayInit {
         reactions: true,
       },
     });
+
+    // If v2 media attachment, link messageId to mediaAttachment
+    if (validEnvelope && 'v' in validEnvelope && validEnvelope.v === 2 && 'mediaId' in validEnvelope) {
+      await this.prisma.mediaAttachment.update({
+        where: { id: validEnvelope.mediaId },
+        data: { messageId: message.id },
+      });
+    }
 
     // Send ACK to sender
     socket.emit('message_sent', {
@@ -1745,12 +1789,73 @@ export class ChatGateway implements OnGatewayInit {
     const authenticatedSenderId = socketContext.userId || data.senderId;
     if (!authenticatedSenderId) return;
 
+    let chatId: string | undefined = undefined;
+    if (roomId.startsWith('friend-')) {
+      const rest = roomId.slice('friend-'.length);
+      let targetUserId: string | null = null;
+      if (rest.startsWith(authenticatedSenderId + '-')) {
+        targetUserId = rest.slice(authenticatedSenderId.length + 1);
+      } else if (rest.endsWith('-' + authenticatedSenderId)) {
+        targetUserId = rest.slice(0, rest.length - authenticatedSenderId.length - 1);
+      }
+
+      if (targetUserId) {
+        const chat = await this.prisma.chat.findFirst({
+          where: {
+            OR: [
+              { userAId: authenticatedSenderId, userBId: targetUserId },
+              { userAId: targetUserId, userBId: authenticatedSenderId },
+            ],
+          },
+        });
+        if (chat) chatId = chat.id;
+      }
+      if (!chatId) {
+        chatId = socketContext.chatId;
+      }
+    } else {
+      chatId = socketContext.chatId;
+    }
+    if (!chatId) return;
+
     let content: string | null = null;
     let isE2EE = false;
     let validEnvelope: BackendE2EEAnyEnvelope | null = null;
 
     if (data?.envelope) {
-      if (isValidE2EEMediaEnvelope(data.envelope)) {
+      if (isValidE2EEMediaV2Envelope(data.envelope)) {
+        // Validate media attachment in database
+        const attachment = await this.prisma.mediaAttachment.findUnique({
+          where: { id: data.envelope.mediaId },
+        });
+
+        if (
+          !attachment ||
+          attachment.chatId !== chatId ||
+          attachment.senderId !== authenticatedSenderId ||
+          attachment.messageId !== null ||
+          attachment.storageKey !== data.envelope.storageKey
+        ) {
+          socket.emit('friend_message_error', {
+            clientId: data.clientId,
+            message: 'Invalid or unauthorized media attachment',
+          });
+          return;
+        }
+
+        validEnvelope = {
+          e2ee: true,
+          v: 2,
+          type: data.envelope.type,
+          mediaId: data.envelope.mediaId,
+          storageKey: data.envelope.storageKey,
+          mime: data.envelope.mime,
+          iv: data.envelope.iv,
+          fileSize: data.envelope.fileSize,
+        };
+        content = JSON.stringify(validEnvelope);
+        isE2EE = true;
+      } else if (isValidE2EEMediaV1Envelope(data.envelope)) {
         validEnvelope = {
           e2ee: true,
           v: 1,
@@ -1785,23 +1890,6 @@ export class ChatGateway implements OnGatewayInit {
       return;
     }
 
-    let chatId = socketContext.chatId;
-    if (!chatId && roomId.startsWith('friend-')) {
-      const parts = roomId.replace('friend-', '').split('-');
-      if (parts.length === 2) {
-        const chat = await this.prisma.chat.findFirst({
-          where: {
-            OR: [
-              { userAId: parts[0], userBId: parts[1] },
-              { userAId: parts[1], userBId: parts[0] },
-            ],
-          },
-        });
-        if (chat) chatId = chat.id;
-      }
-    }
-    if (!chatId) return;
-
     const message = await this.prisma.message.create({
       data: {
         content,
@@ -1812,6 +1900,14 @@ export class ChatGateway implements OnGatewayInit {
       },
       include: { replyTo: true },
     });
+
+    // If v2 media attachment, link messageId to mediaAttachment
+    if (validEnvelope && 'v' in validEnvelope && validEnvelope.v === 2 && 'mediaId' in validEnvelope) {
+      await this.prisma.mediaAttachment.update({
+        where: { id: validEnvelope.mediaId },
+        data: { messageId: message.id },
+      });
+    }
 
     // Determine replyTo structure without creating server-side plaintext reply previews for E2EE
     let replyToPayload: { id: string; content?: string; text?: string; type?: string } | null = null;
@@ -1937,14 +2033,21 @@ export class ChatGateway implements OnGatewayInit {
     if (!senderId) {
       senderId = contextUserId || (await this.getUserId(socket)) || undefined;
     }
-    if (!chatId && roomId.startsWith('friend-')) {
-      const parts = roomId.replace('friend-', '').split('-');
-      if (parts.length === 2) {
+    if (!chatId && roomId.startsWith('friend-') && senderId) {
+      const rest = roomId.slice('friend-'.length);
+      let targetUserId: string | null = null;
+      if (rest.startsWith(senderId + '-')) {
+        targetUserId = rest.slice(senderId.length + 1);
+      } else if (rest.endsWith('-' + senderId)) {
+        targetUserId = rest.slice(0, rest.length - senderId.length - 1);
+      }
+
+      if (targetUserId) {
         const chat = await this.prisma.chat.findFirst({
           where: {
             OR: [
-              { userAId: parts[0], userBId: parts[1] },
-              { userAId: parts[1], userBId: parts[0] },
+              { userAId: senderId, userBId: targetUserId },
+              { userAId: targetUserId, userBId: senderId },
             ],
           },
         });
@@ -2019,14 +2122,21 @@ export class ChatGateway implements OnGatewayInit {
     if (!senderId) {
       senderId = (await this.getUserId(socket)) || undefined;
     }
-    if (!chatId && roomId.startsWith('friend-')) {
-      const parts = roomId.replace('friend-', '').split('-');
-      if (parts.length === 2) {
+    if (!chatId && roomId.startsWith('friend-') && senderId) {
+      const rest = roomId.slice('friend-'.length);
+      let targetUserId: string | null = null;
+      if (rest.startsWith(senderId + '-')) {
+        targetUserId = rest.slice(senderId.length + 1);
+      } else if (rest.endsWith('-' + senderId)) {
+        targetUserId = rest.slice(0, rest.length - senderId.length - 1);
+      }
+
+      if (targetUserId) {
         const chat = await this.prisma.chat.findFirst({
           where: {
             OR: [
-              { userAId: parts[0], userBId: parts[1] },
-              { userAId: parts[1], userBId: parts[0] },
+              { userAId: senderId, userBId: targetUserId },
+              { userAId: targetUserId, userBId: senderId },
             ],
           },
         });

@@ -111,6 +111,7 @@ model Chat {
 
   messages Message[]
   reports  Report[]
+  mediaAttachments MediaAttachment[]
 
   // Private friend chat
   friendship Friendship? @relation("FriendshipChat")
@@ -145,9 +146,30 @@ model Message {
   chat   Chat @relation(fields: [chatId], references: [id])
   sender User @relation("SentMessages", fields: [senderId], references: [id])
 
+  mediaAttachment MediaAttachment?
+
   @@index([chatId, createdAt])
   @@index([senderId])
   @@index([replyToId])
+}
+
+model MediaAttachment {
+  id         String   @id @default(uuid())
+  messageId  String?  @unique
+  chatId     String
+  senderId   String
+  storageKey String
+  mediaType  String
+  mimeType   String
+  fileSize   Int
+  iv         String
+  createdAt  DateTime @default(now())
+
+  message Message? @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  chat    Chat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  @@index([chatId])
+  @@index([storageKey])
 }
 
 model Reaction {

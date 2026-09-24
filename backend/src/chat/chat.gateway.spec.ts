@@ -30,6 +30,10 @@ describe('ChatGateway - Concurrent leaveChat race condition handling', () => {
       friendship: {
         findMany: vi.fn().mockResolvedValue([]),
       },
+      mediaAttachment: {
+        findUnique: vi.fn(),
+        update: vi.fn(),
+      },
     };
 
     mockRedis = {
@@ -204,6 +208,10 @@ describe('ChatGateway - Phase 3 Step 2 Backend E2EE Transport & Storage', () => 
       },
       friendship: {
         findMany: vi.fn().mockResolvedValue([]),
+      },
+      mediaAttachment: {
+        findUnique: vi.fn(),
+        update: vi.fn(),
       },
     };
 
@@ -1139,6 +1147,178 @@ describe('ChatGateway - Phase 3 Step 2 Backend E2EE Transport & Storage', () => 
       // Active session must now be null
       const activeSessionAfterEnd = await gateway.getUserActiveSession(userId);
       expect(activeSessionAfterEnd).toBeNull();
+    });
+  });
+
+  describe('Phase 2: Backblaze B2 Media Storage and v2 Reference Envelopes', () => {
+    it('sendMessage: accepts valid v2 media envelope and associates messageId with MediaAttachment', async () => {
+      const socket = createMockSocket('sock-b2-test');
+      const userId = 'user-b2-1';
+      const roomId = 'room-b2-123';
+      const chatId = 'chat-b2-123';
+      const mediaId = 'media-uuid-1';
+      const storageKey = 'media/chat-b2-123/media-uuid-1.bin';
+
+      vi.spyOn(gateway as any, 'getSocketContext').mockResolvedValue({ roomId, userId, chatId });
+      mockPrisma.chat.findUnique.mockResolvedValue({ id: chatId, endedAt: null });
+
+      mockPrisma.mediaAttachment.findUnique = vi.fn().mockResolvedValue({
+        id: mediaId,
+        chatId,
+        senderId: userId,
+        storageKey,
+        messageId: null,
+      });
+      mockPrisma.mediaAttachment.update = vi.fn().mockResolvedValue({});
+
+      mockPrisma.message.create.mockResolvedValue({
+        id: 'msg-b2-1',
+        content: JSON.stringify({
+          e2ee: true,
+          v: 2,
+          type: 'image',
+          mediaId,
+          storageKey,
+          mime: 'image/jpeg',
+          iv: 'MDEyMzQ1Njc4OWFi',
+          fileSize: 1024,
+        }),
+        chatId,
+        senderId: userId,
+        status: 'delivered',
+        createdAt: new Date(),
+        replyTo: null,
+        reactions: [],
+      });
+
+      await gateway.sendMessage(socket, {
+        clientId: 'client-b2-1',
+        envelope: {
+          e2ee: true,
+          v: 2,
+          type: 'image',
+          mediaId,
+          storageKey,
+          mime: 'image/jpeg',
+          iv: 'MDEyMzQ1Njc4OWFi',
+          fileSize: 1024,
+        },
+      });
+
+      expect(mockPrisma.mediaAttachment.findUnique).toHaveBeenCalledWith({
+        where: { id: mediaId },
+      });
+      expect(mockPrisma.mediaAttachment.update).toHaveBeenCalledWith({
+        where: { id: mediaId },
+        data: { messageId: 'msg-b2-1' },
+      });
+      expect(socket.emit).toHaveBeenCalledWith(
+        'message_sent',
+        expect.objectContaining({ id: 'msg-b2-1', clientId: 'client-b2-1' })
+      );
+    });
+
+    it('sendMessage: rejects v2 media envelope if mediaAttachment belongs to another user or chat', async () => {
+      const socket = createMockSocket('sock-b2-fraud');
+      const userId = 'user-b2-attacker';
+      const roomId = 'room-b2-123';
+      const chatId = 'chat-b2-123';
+      const mediaId = 'media-uuid-victim';
+      const storageKey = 'media/chat-victim/media-uuid-victim.bin';
+
+      vi.spyOn(gateway as any, 'getSocketContext').mockResolvedValue({ roomId, userId, chatId });
+      mockPrisma.chat.findUnique.mockResolvedValue({ id: chatId, endedAt: null });
+
+      mockPrisma.mediaAttachment.findUnique = vi.fn().mockResolvedValue({
+        id: mediaId,
+        chatId: 'different-chat',
+        senderId: 'victim-user',
+        storageKey,
+        messageId: null,
+      });
+
+      await gateway.sendMessage(socket, {
+        clientId: 'client-b2-fraud',
+        envelope: {
+          e2ee: true,
+          v: 2,
+          type: 'image',
+          mediaId,
+          storageKey,
+          mime: 'image/jpeg',
+          iv: 'MDEyMzQ1Njc4OWFi',
+          fileSize: 1024,
+        },
+      });
+
+      expect(socket.emit).toHaveBeenCalledWith('message_error', {
+        clientId: 'client-b2-fraud',
+        message: 'Invalid or unauthorized media attachment',
+      });
+      expect(mockPrisma.message.create).not.toHaveBeenCalled();
+    });
+
+    it('sendFriendMessage: accepts valid v2 media envelope and associates messageId with MediaAttachment', async () => {
+      const socket = createMockSocket('sock-friend-b2');
+      const userId = 'friend-user-1';
+      const roomId = 'friend-friend-user-1-friend-user-2';
+      const chatId = 'friend-chat-123';
+      const mediaId = 'friend-media-uuid-1';
+      const storageKey = 'media/friend-chat-123/friend-media-uuid-1.bin';
+
+      vi.spyOn(gateway as any, 'getSocketContext').mockResolvedValue({ roomId, userId, chatId });
+
+      mockPrisma.mediaAttachment.findUnique = vi.fn().mockResolvedValue({
+        id: mediaId,
+        chatId,
+        senderId: userId,
+        storageKey,
+        messageId: null,
+      });
+      mockPrisma.mediaAttachment.update = vi.fn().mockResolvedValue({});
+
+      mockPrisma.message.create.mockResolvedValue({
+        id: 'friend-msg-1',
+        content: JSON.stringify({
+          e2ee: true,
+          v: 2,
+          type: 'audio',
+          mediaId,
+          storageKey,
+          mime: 'audio/webm',
+          iv: 'MDEyMzQ1Njc4OWFi',
+          fileSize: 2048,
+        }),
+        chatId,
+        senderId: userId,
+        status: 'sent',
+        createdAt: new Date(),
+        replyTo: null,
+      });
+
+      await gateway.sendFriendMessage(socket, {
+        roomId,
+        senderId: userId,
+        clientId: 'friend-client-b2-1',
+        envelope: {
+          e2ee: true,
+          v: 2,
+          type: 'audio',
+          mediaId,
+          storageKey,
+          mime: 'audio/webm',
+          iv: 'MDEyMzQ1Njc4OWFi',
+          fileSize: 2048,
+        },
+      });
+
+      expect(mockPrisma.mediaAttachment.findUnique).toHaveBeenCalledWith({
+        where: { id: mediaId },
+      });
+      expect(mockPrisma.mediaAttachment.update).toHaveBeenCalledWith({
+        where: { id: mediaId },
+        data: { messageId: 'friend-msg-1' },
+      });
     });
   });
 });

@@ -935,7 +935,7 @@ export async function decryptTextMessage(
 
 export type E2EEMediaType = "image" | "audio";
 
-export type E2EEMediaEnvelope = {
+export type E2EEMediaV1Envelope = {
   e2ee: true;
   v: 1;
   type: E2EEMediaType;
@@ -943,6 +943,19 @@ export type E2EEMediaEnvelope = {
   iv: string;
   ct: string;
 };
+
+export type E2EEMediaV2Envelope = {
+  e2ee: true;
+  v: 2;
+  type: E2EEMediaType;
+  mediaId: string;
+  storageKey: string;
+  mime: string;
+  iv: string;
+  fileSize: number;
+};
+
+export type E2EEMediaEnvelope = E2EEMediaV1Envelope | E2EEMediaV2Envelope;
 
 /**
  * Maximum image size in bytes allowed for client-side E2EE photo encryption (5.5 MB).
@@ -973,7 +986,7 @@ export const MAX_VOICE_DURATION_SECONDS = 120; // 2 minutes
  * - iv is valid Base64 and decodes to exactly 12 bytes
  * - ct is valid Base64 and is non-empty
  */
-export function isE2EEMediaEnvelope(value: unknown): value is E2EEMediaEnvelope {
+export function isE2EEMediaV1Envelope(value: unknown): value is E2EEMediaV1Envelope {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return false;
   }
@@ -1031,21 +1044,97 @@ export function isE2EEMediaEnvelope(value: unknown): value is E2EEMediaEnvelope 
   return true;
 }
 
+export function isE2EEMediaV2Envelope(value: unknown): value is E2EEMediaV2Envelope {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+
+  if (candidate.e2ee !== true || candidate.v !== 2) {
+    return false;
+  }
+
+  if (candidate.type !== "image" && candidate.type !== "audio") {
+    return false;
+  }
+
+  if (
+    typeof candidate.mediaId !== "string" ||
+    candidate.mediaId.trim().length === 0 ||
+    typeof candidate.storageKey !== "string" ||
+    candidate.storageKey.trim().length === 0
+  ) {
+    return false;
+  }
+
+  if (
+    typeof candidate.mime !== "string" ||
+    candidate.mime.trim().length === 0 ||
+    (!candidate.mime.startsWith("image/") && !candidate.mime.startsWith("audio/"))
+  ) {
+    return false;
+  }
+
+  if (typeof candidate.iv !== "string") {
+    return false;
+  }
+
+  const base64Regex = /^[A-Za-z0-9+/]+={0,2}$/;
+  if (!base64Regex.test(candidate.iv)) {
+    return false;
+  }
+
+  try {
+    const ivBytes = new Uint8Array(base64ToArrayBuffer(candidate.iv));
+    if (ivBytes.byteLength !== 12) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+
+  if (typeof candidate.fileSize !== "number" || candidate.fileSize <= 0) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Validates whether an unknown value conforms to the versioned E2EEMediaEnvelope specification (v1 or v2).
+ */
+export function isE2EEMediaEnvelope(value: unknown): value is E2EEMediaEnvelope {
+  return isE2EEMediaV1Envelope(value) || isE2EEMediaV2Envelope(value);
+}
+
 /**
  * Serializes a validated E2EEMediaEnvelope into a deterministic JSON string.
  */
 export function packE2EEMedia(envelope: E2EEMediaEnvelope): string {
-  if (!isE2EEMediaEnvelope(envelope)) {
-    throw new Error("[E2EE] Invalid media envelope cannot be packed.");
+  if (isE2EEMediaV1Envelope(envelope)) {
+    return JSON.stringify({
+      e2ee: envelope.e2ee,
+      v: envelope.v,
+      type: envelope.type,
+      mime: envelope.mime,
+      iv: envelope.iv,
+      ct: envelope.ct,
+    });
   }
-  return JSON.stringify({
-    e2ee: envelope.e2ee,
-    v: envelope.v,
-    type: envelope.type,
-    mime: envelope.mime,
-    iv: envelope.iv,
-    ct: envelope.ct,
-  });
+  if (isE2EEMediaV2Envelope(envelope)) {
+    return JSON.stringify({
+      e2ee: envelope.e2ee,
+      v: envelope.v,
+      type: envelope.type,
+      mediaId: envelope.mediaId,
+      storageKey: envelope.storageKey,
+      mime: envelope.mime,
+      iv: envelope.iv,
+      fileSize: envelope.fileSize,
+    });
+  }
+  throw new Error("[E2EE] Invalid media envelope cannot be packed.");
 }
 
 /**
@@ -1098,18 +1187,21 @@ export function buildMediaAAD(
 }
 
 /**
- * Encrypts a raw media Blob using AES-256-GCM with a fresh 12-byte IV,
- * bound cryptographically to chatId, senderId, type, and mime via AAD.
- *
- * Returns an E2EEMediaEnvelope. Plaintext bytes are never stored in the envelope.
+ * Encrypts a raw media Blob directly to binary ArrayBuffer without Base64 encoding.
+ * Used for direct binary upload to Backblaze B2 (Phase 2).
  */
-export async function encryptMediaBlob(
+export async function encryptMediaBlobToBinary(
   blob: Blob,
   chatId: string,
   senderId: string,
   peerPublicKey: string,
   type: E2EEMediaType
-): Promise<E2EEMediaEnvelope> {
+): Promise<{
+  rawEncryptedBytes: ArrayBuffer;
+  iv: string;
+  mime: string;
+  fileSize: number;
+}> {
   if (!blob || typeof blob.arrayBuffer !== "function") {
     throw new Error("[E2EE] Invalid blob provided for media encryption.");
   }
@@ -1158,19 +1250,97 @@ export async function encryptMediaBlob(
 
   // 5. Encrypt with AES-256-GCM
   const subtle = getSubtleCrypto();
-  const ciphertextBuffer = await subtle.encrypt(gcmParams, conversationKey, rawBytes);
+  const rawEncryptedBytes = await subtle.encrypt(gcmParams, conversationKey, rawBytes);
 
-  // 6. Construct and validate envelope
-  const envelope: E2EEMediaEnvelope = {
+  return {
+    rawEncryptedBytes,
+    iv: arrayBufferToBase64(iv),
+    mime,
+    fileSize: blob.size,
+  };
+}
+
+/**
+ * Decrypts raw encrypted binary ArrayBuffer using AES-256-GCM and media AAD.
+ */
+export async function decryptMediaRawBytes(
+  rawEncryptedBytes: ArrayBuffer,
+  ivBase64: string,
+  mime: string,
+  type: E2EEMediaType,
+  chatId: string,
+  senderId: string,
+  peerPublicKey: string
+): Promise<Blob> {
+  if (!rawEncryptedBytes || rawEncryptedBytes.byteLength === 0) {
+    throw new Error("[E2EE] Empty encrypted bytes provided for media decryption.");
+  }
+  if (!chatId || typeof chatId !== "string") {
+    throw new Error("[E2EE] Invalid chatId provided for media decryption.");
+  }
+  if (!senderId || typeof senderId !== "string") {
+    throw new Error("[E2EE] Invalid senderId provided for media decryption.");
+  }
+  if (!peerPublicKey || typeof peerPublicKey !== "string") {
+    throw new Error("[E2EE] Invalid peerPublicKey provided for media decryption.");
+  }
+
+  // 1. Obtain conversation shared AES key
+  const conversationKey = await getConversationSharedKey(chatId, peerPublicKey);
+
+  // 2. Decode IV
+  const iv = new Uint8Array(base64ToArrayBuffer(ivBase64));
+
+  // 3. Construct media-specific AAD
+  const aad = buildMediaAAD(chatId, senderId, type, mime);
+  const encoder = new TextEncoder();
+
+  const gcmParams: AesGcmParams = {
+    name: "AES-GCM",
+    iv: iv as unknown as BufferSource,
+    additionalData: encoder.encode(aad),
+  };
+
+  // 4. AES-256-GCM decrypt (throws OperationError if auth fails or data tampered)
+  const subtle = getSubtleCrypto();
+  const decryptedBuffer = await subtle.decrypt(gcmParams, conversationKey, rawEncryptedBytes);
+
+  return new Blob([decryptedBuffer], {
+    type: mime,
+  });
+}
+
+/**
+ * Encrypts a raw media Blob using AES-256-GCM with a fresh 12-byte IV,
+ * bound cryptographically to chatId, senderId, type, and mime via AAD.
+ *
+ * Returns an E2EEMediaV1Envelope (inline Base64 ciphertext).
+ */
+export async function encryptMediaBlob(
+  blob: Blob,
+  chatId: string,
+  senderId: string,
+  peerPublicKey: string,
+  type: E2EEMediaType
+): Promise<E2EEMediaEnvelope> {
+  const { rawEncryptedBytes, iv, mime } = await encryptMediaBlobToBinary(
+    blob,
+    chatId,
+    senderId,
+    peerPublicKey,
+    type
+  );
+
+  const envelope: E2EEMediaV1Envelope = {
     e2ee: true,
     v: 1,
     type,
     mime,
-    iv: arrayBufferToBase64(iv),
-    ct: arrayBufferToBase64(ciphertextBuffer),
+    iv,
+    ct: arrayBufferToBase64(rawEncryptedBytes),
   };
 
-  if (!isE2EEMediaEnvelope(envelope)) {
+  if (!isE2EEMediaV1Envelope(envelope)) {
     throw new Error("[E2EE] Internal error: Generated media envelope failed validation.");
   }
 
@@ -1178,7 +1348,7 @@ export async function encryptMediaBlob(
 }
 
 /**
- * Decrypts an E2EEMediaEnvelope using the derived conversation key,
+ * Decrypts a v1 inline E2EEMediaEnvelope using the derived conversation key,
  * verifying that the ciphertext, IV, chatId, senderId, type, and MIME match exactly.
  *
  * Returns a Blob containing decrypted plaintext bytes with envelope.mime type.
@@ -1193,41 +1363,20 @@ export async function decryptMediaEnvelope(
   if (!isE2EEMediaEnvelope(envelope)) {
     throw new Error("[E2EE] Malformed or invalid E2EE media envelope.");
   }
-  if (!chatId || typeof chatId !== "string") {
-    throw new Error("[E2EE] Invalid chatId provided for media decryption.");
-  }
-  if (!senderId || typeof senderId !== "string") {
-    throw new Error("[E2EE] Invalid senderId provided for media decryption.");
-  }
-  if (!peerPublicKey || typeof peerPublicKey !== "string") {
-    throw new Error("[E2EE] Invalid peerPublicKey provided for media decryption.");
+  if (envelope.v !== 1) {
+    throw new Error("[E2EE] decryptMediaEnvelope only decrypts v1 inline envelopes. For v2, download ciphertext and use decryptMediaRawBytes.");
   }
 
-  // 2. Obtain conversation shared AES key
-  const conversationKey = await getConversationSharedKey(chatId, peerPublicKey);
-
-  // 3. Decode IV and ciphertext
-  const iv = new Uint8Array(base64ToArrayBuffer(envelope.iv));
-  const ciphertext = base64ToArrayBuffer(envelope.ct);
-
-  // 4. Construct media-specific AAD
-  const aad = buildMediaAAD(chatId, senderId, envelope.type, envelope.mime);
-  const encoder = new TextEncoder();
-
-  const gcmParams: AesGcmParams = {
-    name: "AES-GCM",
-    iv: iv as unknown as BufferSource,
-    additionalData: encoder.encode(aad),
-  };
-
-  // 5. AES-256-GCM decrypt (throws OperationError if auth fails or data tampered)
-  const subtle = getSubtleCrypto();
-  const decryptedBuffer = await subtle.decrypt(gcmParams, conversationKey, ciphertext);
-
-  // 6. Return reconstituted Blob with original MIME
-  return new Blob([decryptedBuffer], {
-    type: envelope.mime,
-  });
+  const ciphertextBuffer = base64ToArrayBuffer(envelope.ct);
+  return await decryptMediaRawBytes(
+    ciphertextBuffer,
+    envelope.iv,
+    envelope.mime,
+    envelope.type,
+    chatId,
+    senderId,
+    peerPublicKey
+  );
 }
 
 

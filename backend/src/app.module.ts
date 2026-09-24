@@ -14,6 +14,7 @@ import { RedisModule } from './redis/redis.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
 import { GeminiModule } from './gemini/gemini.module.js';
 import { AuthModule } from './auth/auth.module.js';
+import { MediaModule } from './media/media.module.js';
 import { SecurityHeadersMiddleware } from './common/middleware/security-headers.middleware.js';
 import { GlobalRateLimitMiddleware } from './common/middleware/global-rate-limit.middleware.js';
 
@@ -26,6 +27,7 @@ import { GlobalRateLimitMiddleware } from './common/middleware/global-rate-limit
     FriendsModule,
     NotificationsModule,
     GeminiModule,
+    MediaModule,
   ],
   controllers: [
     AppController,

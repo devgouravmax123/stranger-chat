@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Backend E2EE Message Envelope DTO and Type Guards
  *
  * Implements strict structural validation for the versioned E2EE envelope.
@@ -89,12 +89,12 @@ export function parseE2EEEnvelope(raw: string): BackendE2EEMessageEnvelope | nul
 }
 
 // ==========================================
-// PHASE 4.2: E2EE MEDIA ENVELOPE DTO & VALIDATION
+// PHASE 4.2 & PHASE 2: E2EE MEDIA ENVELOPE DTO & VALIDATION
 // ==========================================
 
 export type BackendE2EEMediaType = 'image' | 'audio';
 
-export interface BackendE2EEMediaEnvelope {
+export interface BackendE2EEMediaV1Envelope {
   e2ee: true;
   v: 1;
   type: BackendE2EEMediaType;
@@ -102,6 +102,19 @@ export interface BackendE2EEMediaEnvelope {
   iv: string; // Base64 representation of exactly 12-byte IV
   ct: string; // Base64 ciphertext + GCM auth tag
 }
+
+export interface BackendE2EEMediaV2Envelope {
+  e2ee: true;
+  v: 2;
+  type: BackendE2EEMediaType;
+  mediaId: string;
+  storageKey: string;
+  mime: string;
+  iv: string; // Base64 representation of exactly 12-byte IV
+  fileSize: number;
+}
+
+export type BackendE2EEMediaEnvelope = BackendE2EEMediaV1Envelope | BackendE2EEMediaV2Envelope;
 
 /**
  * Named constant for maximum media ciphertext Base64 character length.
@@ -111,19 +124,7 @@ export interface BackendE2EEMediaEnvelope {
  */
 export const MAX_MEDIA_CIPHERTEXT_SIZE = 8 * 1024 * 1024; // 8 MB
 
-/**
- * Validates whether an untrusted value matches the exact E2EEMediaEnvelope structure.
- *
- * Checks:
- * - non-null object, not an array
- * - e2ee === true
- * - v === 1
- * - type === "image" || type === "audio"
- * - mime is a non-empty string starting with "image/" or "audio/"
- * - iv is valid Base64 string that decodes to exactly 12 bytes
- * - ct is a non-empty valid Base64 string within MAX_MEDIA_CIPHERTEXT_SIZE
- */
-export function isValidE2EEMediaEnvelope(value: unknown): value is BackendE2EEMediaEnvelope {
+export function isValidE2EEMediaV1Envelope(value: unknown): value is BackendE2EEMediaV1Envelope {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return false;
   }
@@ -174,6 +175,69 @@ export function isValidE2EEMediaEnvelope(value: unknown): value is BackendE2EEMe
   return true;
 }
 
+export function isValidE2EEMediaV2Envelope(value: unknown): value is BackendE2EEMediaV2Envelope {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+
+  if (candidate.e2ee !== true || candidate.v !== 2) {
+    return false;
+  }
+
+  if (candidate.type !== 'image' && candidate.type !== 'audio') {
+    return false;
+  }
+
+  if (
+    typeof candidate.mediaId !== 'string' ||
+    candidate.mediaId.trim().length === 0 ||
+    typeof candidate.storageKey !== 'string' ||
+    candidate.storageKey.trim().length === 0
+  ) {
+    return false;
+  }
+
+  if (
+    typeof candidate.mime !== 'string' ||
+    candidate.mime.trim().length === 0 ||
+    (!candidate.mime.startsWith('image/') && !candidate.mime.startsWith('audio/'))
+  ) {
+    return false;
+  }
+
+  if (typeof candidate.iv !== 'string') {
+    return false;
+  }
+
+  if (!BASE64_REGEX.test(candidate.iv)) {
+    return false;
+  }
+
+  try {
+    const ivBuf = Buffer.from(candidate.iv, 'base64');
+    if (ivBuf.length !== 12) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+
+  if (typeof candidate.fileSize !== 'number' || candidate.fileSize <= 0) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Validates whether an untrusted value matches either v1 or v2 E2EEMediaEnvelope structure.
+ */
+export function isValidE2EEMediaEnvelope(value: unknown): value is BackendE2EEMediaEnvelope {
+  return isValidE2EEMediaV1Envelope(value) || isValidE2EEMediaV2Envelope(value);
+}
+
 /**
  * Parses and strictly validates a raw JSON string into a BackendE2EEMediaEnvelope.
  * Returns null on any malformed or non-media-envelope input.
@@ -217,4 +281,3 @@ export function parseE2EEAnyEnvelope(raw: string): BackendE2EEAnyEnvelope | null
     return null;
   }
 }
-

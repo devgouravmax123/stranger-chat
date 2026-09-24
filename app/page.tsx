@@ -44,6 +44,10 @@ import {
   MAX_E2EE_AUDIO_BYTES,
   MAX_VOICE_DURATION_SECONDS,
 } from "@/lib/crypto";
+import {
+  uploadEncryptedMediaToB2,
+  downloadAndDecryptMediaFromB2,
+} from "@/lib/mediaUploader";
 
 // ==========================================
 // NAVIGATION & VIEW TYPES
@@ -415,6 +419,31 @@ export default function Home() {
   const socketRef = useRef<Socket | null>(null);
   socketRef.current = socket;
 
+  const resolveMediaEnvelopeBlob = useCallback(
+    async (
+      envelope: E2EEMediaEnvelope,
+      chatId: string,
+      senderId: string,
+      peerKey: string
+    ): Promise<Blob> => {
+      if (envelope.v === 1) {
+        return await decryptMediaEnvelope(envelope, chatId, senderId, peerKey);
+      }
+      const { token } = getPersistedAuth();
+      if (!token) {
+        throw new Error("Missing auth token to download media");
+      }
+      return await downloadAndDecryptMediaFromB2(
+        envelope,
+        chatId,
+        senderId,
+        peerKey,
+        token
+      );
+    },
+    []
+  );
+
   const navigateTo = useCallback(
     (view: AppView, pushToHistory = true) => {
       // If leaving stranger chat or friend chat, safely tear down any active video calls
@@ -771,7 +800,7 @@ export default function Home() {
               if (activeChatId && peerKey) {
                 try {
                   if (isE2EEMediaEnvelope(item.envelope)) {
-                    const decryptedBlob = await decryptMediaEnvelope(
+                    const decryptedBlob = await resolveMediaEnvelopeBlob(
                       item.envelope,
                       activeChatId,
                       item.senderId,
@@ -810,7 +839,7 @@ export default function Home() {
               if (activeChatId && peerKey) {
                 try {
                   if (unpackedMedia) {
-                    const decryptedBlob = await decryptMediaEnvelope(
+                    const decryptedBlob = await resolveMediaEnvelopeBlob(
                       unpackedMedia,
                       activeChatId,
                       item.senderId,
@@ -1134,7 +1163,7 @@ export default function Home() {
           if (activeChatId && peerKey) {
             try {
               if (isE2EEMediaEnvelope(data.envelope)) {
-                const decryptedBlob = await decryptMediaEnvelope(
+                const decryptedBlob = await resolveMediaEnvelopeBlob(
                   data.envelope,
                   activeChatId,
                   data.senderId,
@@ -1524,7 +1553,7 @@ export default function Home() {
               if (activeChatId && peerKey) {
                 try {
                   if (isE2EEMediaEnvelope(item.envelope)) {
-                    const decryptedBlob = await decryptMediaEnvelope(
+                    const decryptedBlob = await resolveMediaEnvelopeBlob(
                       item.envelope,
                       activeChatId,
                       item.senderId,
@@ -1571,7 +1600,7 @@ export default function Home() {
               if (activeChatId && peerKey) {
                 try {
                   if (unpackedMedia) {
-                    const decryptedBlob = await decryptMediaEnvelope(
+                    const decryptedBlob = await resolveMediaEnvelopeBlob(
                       unpackedMedia,
                       activeChatId,
                       item.senderId,
@@ -1675,7 +1704,7 @@ export default function Home() {
 
           if (unpackedMedia && activeChatId && peerKey) {
             try {
-              const decryptedBlob = await decryptMediaEnvelope(
+              const decryptedBlob = await resolveMediaEnvelopeBlob(
                 unpackedMedia,
                 activeChatId,
                 item.senderId,
@@ -1818,7 +1847,7 @@ export default function Home() {
         if (activeChatId && peerKey) {
           try {
             if (isE2EEMediaEnvelope(data.envelope)) {
-              const decryptedBlob = await decryptMediaEnvelope(
+              const decryptedBlob = await resolveMediaEnvelopeBlob(
                 data.envelope,
                 activeChatId,
                 data.senderId,
@@ -2442,26 +2471,32 @@ export default function Home() {
     setReplyingTo(null);
 
     try {
-      // Encrypt audio blob locally with AES-256-GCM + Media AAD - NEVER send raw audio bytes
-      const envelope = await encryptMediaBlob(
-        audioBlob,
-        activeChatId,
-        currentUserId,
-        peerKey,
-        "audio"
-      );
+      const { token } = getPersistedAuth();
+      if (!token) {
+        throw new Error("Missing auth token");
+      }
 
-      // Emit only the encrypted envelope via send_message
+      // Upload raw encrypted binary directly to Backblaze B2
+      const { envelope } = await uploadEncryptedMediaToB2({
+        blob: audioBlob,
+        chatId: activeChatId,
+        senderId: currentUserId,
+        peerPublicKey: peerKey,
+        type: "audio",
+        token,
+      });
+
+      // Emit only the lightweight v2 envelope via send_message
       socket.emit("send_message", {
         envelope,
         clientId,
         replyToId: targetReplyingTo?.id,
       });
     } catch (encErr) {
-      console.error("[E2EE] Failed to encrypt stranger voice note:", encErr);
+      console.error("[E2EE] Failed to encrypt or upload stranger voice note:", encErr);
       revokeSingleObjectUrl(localBlobUrl);
       setMessages((prev) => prev.filter((m) => m.clientId !== clientId));
-      showNotification("Voice note encryption failed. Message was not sent.");
+      showNotification("Voice note upload failed. Message was not sent.");
     }
   };
 
@@ -2525,28 +2560,33 @@ export default function Home() {
     setReplyingTo(null);
 
     try {
-      // 2. Encrypt the original image file directly using AES-256-GCM + Media AAD
-      // The browser encrypts BEFORE sending. Backend receives ONLY the envelope!
-      const envelope = await encryptMediaBlob(
-        imageFile,
-        activeChatId,
-        currentUserId,
-        peerKey,
-        "image"
-      );
+      const { token } = getPersistedAuth();
+      if (!token) {
+        throw new Error("Missing auth token");
+      }
 
-      // 3. Emit ONLY the encrypted envelope via send_message - NO raw bytes, NO data URLs, NO plaintext!
+      // 2. Encrypt and upload directly to Backblaze B2
+      const { envelope } = await uploadEncryptedMediaToB2({
+        blob: imageFile,
+        chatId: activeChatId,
+        senderId: currentUserId,
+        peerPublicKey: peerKey,
+        type: "image",
+        token,
+      });
+
+      // 3. Emit ONLY the lightweight v2 envelope via send_message
       socket.emit("send_message", {
         envelope,
         clientId,
         replyToId: targetReplyingTo?.id,
       });
     } catch (encErr) {
-      console.error("[E2EE] Failed to encrypt stranger photo:", encErr);
+      console.error("[E2EE] Failed to encrypt or upload stranger photo:", encErr);
       // Clean up optimistic object URL on failure
       revokeSingleObjectUrl(localBlobUrl);
       setMessages((prev) => prev.filter((m) => m.clientId !== clientId));
-      showNotification("Photo encryption failed. Message was not sent.");
+      showNotification("Photo upload failed. Message was not sent.");
     }
   };
 
@@ -3112,16 +3152,22 @@ export default function Home() {
     setFriendReplyingTo(null);
 
     try {
-      // Encrypt audio blob locally with AES-256-GCM + Media AAD - NEVER send raw audio bytes
-      const envelope = await encryptMediaBlob(
-        audioBlob,
-        activeChatId,
-        userId,
-        peerKey,
-        "audio"
-      );
+      const { token } = getPersistedAuth();
+      if (!token) {
+        throw new Error("Missing auth token");
+      }
 
-      // Emit only the encrypted envelope via send_friend_message
+      // Upload raw encrypted binary directly to Backblaze B2
+      const { envelope } = await uploadEncryptedMediaToB2({
+        blob: audioBlob,
+        chatId: activeChatId,
+        senderId: userId,
+        peerPublicKey: peerKey,
+        type: "audio",
+        token,
+      });
+
+      // Emit only the lightweight v2 envelope via send_friend_message
       socket.emit("send_friend_message", {
         roomId: targetRoomId,
         senderId: userId,
@@ -3130,10 +3176,10 @@ export default function Home() {
         clientId,
       });
     } catch (encErr) {
-      console.error("[E2EE] Failed to encrypt friend voice note:", encErr);
+      console.error("[E2EE] Failed to encrypt or upload friend voice note:", encErr);
       revokeSingleObjectUrl(localBlobUrl);
       setFriendMessages((prev) => prev.filter((m) => m.clientId !== clientId));
-      showNotification("Voice note encryption failed. Message was not sent.");
+      showNotification("Voice note upload failed. Message was not sent.");
     }
   };
 
@@ -3210,16 +3256,22 @@ export default function Home() {
     setFriendReplyingTo(null);
 
     try {
-      // 2. Encrypt original image file directly with AES-256-GCM + Media AAD - NEVER send raw image bytes
-      const envelope = await encryptMediaBlob(
-        imageFile,
-        activeChatId,
-        userId,
-        peerKey,
-        "image"
-      );
+      const { token } = getPersistedAuth();
+      if (!token) {
+        throw new Error("Missing auth token");
+      }
 
-      // 3. Emit ONLY the encrypted envelope via send_friend_message
+      // 2. Encrypt and upload directly to Backblaze B2
+      const { envelope } = await uploadEncryptedMediaToB2({
+        blob: imageFile,
+        chatId: activeChatId,
+        senderId: userId,
+        peerPublicKey: peerKey,
+        type: "image",
+        token,
+      });
+
+      // 3. Emit ONLY the lightweight v2 envelope via send_friend_message
       socket.emit("send_friend_message", {
         roomId: targetRoomId,
         senderId: userId,
@@ -3228,10 +3280,10 @@ export default function Home() {
         clientId,
       });
     } catch (encErr) {
-      console.error("[E2EE] Failed to encrypt friend photo:", encErr);
+      console.error("[E2EE] Failed to encrypt or upload friend photo:", encErr);
       revokeSingleObjectUrl(localBlobUrl);
       setFriendMessages((prev) => prev.filter((m) => m.clientId !== clientId));
-      showNotification("Photo encryption failed. Message was not sent.");
+      showNotification("Photo upload failed. Message was not sent.");
     }
   };
 
