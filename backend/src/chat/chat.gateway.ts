@@ -118,6 +118,8 @@ export class ChatGateway implements OnGatewayInit {
   private inMemoryUserPreferences = new Map<string, MatchPreferences>();
   private inMemoryActiveCallSessions = new Map<string, ActiveCallSession>();
   private inMemoryUserActiveCalls = new Map<string, string>();
+  private inMemoryUserActiveMatches = new Map<string, { roomId: string; chatId: string; peerUserId: string; score: number; createdAt: number }>();
+  private inMemoryDisconnectGraceTimers = new Map<string, NodeJS.Timeout>();
   private knownUserIdsCache = new Set<string>();
 
   constructor(
@@ -193,6 +195,70 @@ export class ChatGateway implements OnGatewayInit {
           this.clearActiveCallSession(sCallId);
         }
       }
+    }
+  }
+
+  // ==========================================
+  // AUTHORITATIVE ACTIVE STRANGER SESSION HELPERS
+  // ==========================================
+
+  async getUserActiveSession(userId: string): Promise<{
+    roomId: string;
+    chatId: string;
+    peerUserId: string;
+    score: number;
+    createdAt: number;
+  } | null> {
+    if (!userId) return null;
+    let match = this.inMemoryUserActiveMatches.get(userId) || null;
+    if (!match && typeof this.redis?.getUserActiveMatch === 'function') {
+      try {
+        match = await this.redis.getUserActiveMatch(userId);
+        if (match) {
+          this.inMemoryUserActiveMatches.set(userId, match);
+        }
+      } catch {}
+    }
+    return match;
+  }
+
+  async setUserActiveSession(userId: string, data: {
+    roomId: string;
+    chatId: string;
+    peerUserId: string;
+    score: number;
+    createdAt?: number;
+  }): Promise<void> {
+    if (!userId) return;
+    const sessionData = {
+      ...data,
+      createdAt: data.createdAt ?? Date.now(),
+    };
+    this.inMemoryUserActiveMatches.set(userId, sessionData);
+    if (typeof this.redis?.setUserActiveMatch === 'function') {
+      try {
+        await this.redis.setUserActiveMatch(userId, sessionData);
+      } catch {}
+    }
+  }
+
+  async removeUserActiveSession(userId: string): Promise<void> {
+    if (!userId) return;
+    this.inMemoryUserActiveMatches.delete(userId);
+    this.cancelDisconnectGraceTimer(userId);
+    if (typeof this.redis?.removeUserActiveMatch === 'function') {
+      try {
+        await this.redis.removeUserActiveMatch(userId);
+      } catch {}
+    }
+  }
+
+  cancelDisconnectGraceTimer(userId: string): void {
+    if (!userId) return;
+    const timer = this.inMemoryDisconnectGraceTimers.get(userId);
+    if (timer) {
+      clearTimeout(timer);
+      this.inMemoryDisconnectGraceTimers.delete(userId);
     }
   }
 
@@ -346,10 +412,61 @@ export class ChatGateway implements OnGatewayInit {
     const userId = await this.getUserId(socket);
 
     if (userId) {
+      this.cancelDisconnectGraceTimer(userId);
       await this.recordUserOnline(socket, userId);
       const token = this.sessionTokenService.signToken(userId);
       socket.emit('user_ready', { userId, token });
       console.log('User ready:', userId);
+
+      // Check whether user has an active stranger session to restore (e.g. after refresh/reconnect)
+      try {
+        const activeMatch = await this.getUserActiveSession(userId);
+        if (activeMatch && activeMatch.roomId && activeMatch.chatId) {
+          const chat = await this.prisma.chat.findUnique({
+            where: { id: activeMatch.chatId },
+            select: { endedAt: true },
+          });
+
+          if (!chat || chat.endedAt) {
+            // Match has genuinely ended in DB, clean up stale session
+            await this.removeUserActiveSession(userId);
+          } else {
+            // Restore active session for this new socket
+            socket.join(activeMatch.roomId);
+            this.inMemoryUserRooms.set(socket.id, activeMatch.roomId);
+            this.inMemorySocketChats.set(socket.id, activeMatch.chatId);
+
+            if (this.redis.getIsConnected()) {
+              await this.redis.setSocketMapping(socket.id, {
+                userId,
+                roomId: activeMatch.roomId,
+                chatId: activeMatch.chatId,
+              });
+              await this.redis.setPresence(socket.id, 'chatting');
+            }
+
+            const [messages, strangerProfile] = await Promise.all([
+              this.getFormattedMessages(activeMatch.chatId, userId),
+              this.getUserProfile(activeMatch.peerUserId),
+            ]);
+
+            socket.emit('matched', {
+              roomId: activeMatch.roomId,
+              chatId: activeMatch.chatId,
+              userId,
+              strangerUserId: activeMatch.peerUserId,
+              score: activeMatch.score,
+              strangerProfile,
+            });
+            socket.emit('chat_history', { messages, userId });
+
+            this.server.to(activeMatch.roomId).emit('stranger_online');
+            console.log(`[Session Restore] Restored active stranger session in room ${activeMatch.roomId} for user ${userId}`);
+          }
+        }
+      } catch (restoreErr) {
+        console.warn(`[Session Restore] Error restoring session for user ${userId}:`, restoreErr);
+      }
     } else {
       socket.emit('auth_error', {
         message: 'Authentication failed: invalid, expired, or missing session token for user identity',
@@ -426,7 +543,26 @@ export class ChatGateway implements OnGatewayInit {
     // Get list of ineligible (blocked or reported) user IDs for current user
     const ineligibleUserIds = await this.getIneligibleUserIds(userId);
 
-    // Clean up any stale active chat before initiating new matchmaking
+    // MULTI-TAB ENFORCEMENT: Authenticated user may have at most ONE active stranger match globally
+    const existingActiveSession = await this.getUserActiveSession(userId);
+    if (existingActiveSession && existingActiveSession.roomId && existingActiveSession.chatId) {
+      const activeChat = await this.prisma.chat.findUnique({
+        where: { id: existingActiveSession.chatId },
+        select: { endedAt: true },
+      });
+
+      if (activeChat && !activeChat.endedAt) {
+        socket.emit('already_in_match', {
+          message: 'You are already in match',
+        });
+        return;
+      } else {
+        // Chat was already ended, clean up stale session state
+        await this.removeUserActiveSession(userId);
+      }
+    }
+
+    // Clean up any stale active room for this specific socket before initiating new matchmaking
     const currentContext = await this.getSocketContext(socket);
     if (currentContext.roomId) {
       console.log(`[Matchmaking] Cleaning up active room ${currentContext.roomId} for socket ${socket.id}`);
@@ -563,6 +699,12 @@ export class ChatGateway implements OnGatewayInit {
     this.inMemorySocketChats.set(stranger.id, chat.id);
     this.inMemorySocketChats.set(socket.id, chat.id);
 
+    // Register authoritative active match session for both users
+    await Promise.all([
+      this.setUserActiveSession(strangerUserId, { roomId, chatId: chat.id, peerUserId: userId, score }),
+      this.setUserActiveSession(userId, { roomId, chatId: chat.id, peerUserId: strangerUserId, score }),
+    ]);
+
     const messages = await this.getFormattedMessages(chat.id, userId);
     const strangerMessages = await this.getFormattedMessages(chat.id, strangerUserId);
 
@@ -640,6 +782,8 @@ export class ChatGateway implements OnGatewayInit {
       }),
       this.redis.setPresence(sockA.id, 'chatting'),
       this.redis.setPresence(sockB.id, 'chatting'),
+      this.setUserActiveSession(userAId, { roomId, chatId: chat.id, peerUserId: userBId, score }),
+      this.setUserActiveSession(userBId, { roomId, chatId: chat.id, peerUserId: userAId, score }),
     ]);
 
     // Newly created stranger chat has no prior messages - emit [] without DB query
@@ -2380,6 +2524,38 @@ export class ChatGateway implements OnGatewayInit {
         peerSocket.leave(roomId);
       }
     }
+
+    // Clean up authoritative active match locks for both participants
+    const currentUserId = (await this.getSocketContext(socket)).userId || (await this.getUserId(socket));
+    if (currentUserId) {
+      await this.removeUserActiveSession(currentUserId);
+    }
+    let peerUserId: string | null = null;
+    if (peerSocketId) {
+      peerUserId = this.inMemorySocketUsers.get(peerSocketId) || null;
+      if (!peerUserId && this.redis.getIsConnected()) {
+        const peerMapping = await this.redis.getSocketMapping(peerSocketId);
+        peerUserId = peerMapping?.userId || null;
+      }
+    }
+    if (peerUserId) {
+      await this.removeUserActiveSession(peerUserId);
+    }
+    if (chatId) {
+      // Fallback: look up chat participants to ensure active locks are cleared even if socket mapping already gone
+      try {
+        const chatParticipants = await this.prisma.chat.findUnique({
+          where: { id: chatId },
+          select: { userAId: true, userBId: true },
+        });
+        if (chatParticipants) {
+          await Promise.all([
+            this.removeUserActiveSession(chatParticipants.userAId),
+            this.removeUserActiveSession(chatParticipants.userBId),
+          ]);
+        }
+      } catch {}
+    }
   }
 
   async handleDisconnect(socket: Socket) {
@@ -2398,7 +2574,7 @@ export class ChatGateway implements OnGatewayInit {
       }
     }
 
-    const { roomId } = await this.getSocketContext(socket);
+    const { roomId, chatId } = await this.getSocketContext(socket);
     if (roomId) {
       const roomActiveCall = this.getActiveCallForRoom(roomId);
       if (roomActiveCall) {
@@ -2409,12 +2585,10 @@ export class ChatGateway implements OnGatewayInit {
           reason: 'disconnected',
         });
       }
-      socket.to(roomId).emit('stranger_offline', { roomId });
     }
 
     if (this.redis.getIsConnected()) {
       await this.redis.removeWaitingUserBySocketId(socket.id);
-      await this.leaveChat(socket, 'ended');
       await this.redis.removePresence(socket.id);
       await this.redis.removeSocketMapping(socket.id);
     } else {
@@ -2427,6 +2601,37 @@ export class ChatGateway implements OnGatewayInit {
     }
 
     await this.recordUserDisconnect(socket);
+
+    // If socket was in an active room, handle disconnect vs page refresh
+    if (roomId) {
+      const remainingSockets = userId ? (this.inMemoryUserSockets.get(userId)?.size || 0) : 0;
+      if (remainingSockets > 0) {
+        // User still has another socket/tab open, do NOT end session or notify stranger
+        return;
+      }
+
+      if (userId) {
+        // User has 0 active sockets (e.g. page refresh in-flight, temporary reconnect)
+        // Start a 15-second grace timer before genuinely ending stranger session
+        this.cancelDisconnectGraceTimer(userId);
+        const graceTimer = setTimeout(async () => {
+          this.inMemoryDisconnectGraceTimers.delete(userId);
+          // Check if user still has no connected sockets
+          const currentSockets = this.inMemoryUserSockets.get(userId)?.size || 0;
+          if (currentSockets === 0) {
+            console.log(`[Grace Timer Expired] User ${userId} did not reconnect within grace period. Ending session in room ${roomId}.`);
+            this.server.to(roomId).emit('stranger_offline', { roomId });
+            await this.leaveChat(socket, 'ended');
+          }
+        }, 15000);
+
+        this.inMemoryDisconnectGraceTimers.set(userId, graceTimer);
+      } else {
+        // Unauthenticated socket or no userId, immediate end
+        socket.to(roomId).emit('stranger_offline', { roomId });
+        await this.leaveChat(socket, 'ended');
+      }
+    }
   }
 
   // ==========================================

@@ -406,6 +406,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       `presence:sockets:${userId}`,
       `ai:cooldown:${userId}`,
       `ai:inflight:${userId}`,
+      `user:match:${userId}`,
     ];
     for (const k of keys) {
       await this.del(k);
@@ -478,21 +479,53 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     chatId: string;
     createdAt: number;
   }): Promise<void> {
-    if (!this.isConnected) return;
     const key = `match:${roomId}`;
     await this.set(key, JSON.stringify(matchData), 86400);
   }
 
   async getMatchState(roomId: string): Promise<any | null> {
-    if (!this.isConnected) return null;
     const key = `match:${roomId}`;
     const raw = await this.get(key);
     return raw ? JSON.parse(raw) : null;
   }
 
   async removeMatchState(roomId: string): Promise<void> {
-    if (!this.isConnected) return;
     const key = `match:${roomId}`;
+    await this.del(key);
+  }
+
+  /**
+   * User Active Match State (One-active-match enforcement)
+   */
+  async setUserActiveMatch(userId: string, data: {
+    roomId: string;
+    chatId: string;
+    peerUserId: string;
+    score: number;
+    createdAt?: number;
+  }): Promise<void> {
+    const key = `user:match:${userId}`;
+    const payload = {
+      ...data,
+      createdAt: data.createdAt ?? Date.now(),
+    };
+    await this.set(key, JSON.stringify(payload), 86400);
+  }
+
+  async getUserActiveMatch(userId: string): Promise<{
+    roomId: string;
+    chatId: string;
+    peerUserId: string;
+    score: number;
+    createdAt: number;
+  } | null> {
+    const key = `user:match:${userId}`;
+    const raw = await this.get(key);
+    return raw ? JSON.parse(raw) : null;
+  }
+
+  async removeUserActiveMatch(userId: string): Promise<void> {
+    const key = `user:match:${userId}`;
     await this.del(key);
   }
 }

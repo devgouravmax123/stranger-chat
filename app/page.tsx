@@ -643,7 +643,7 @@ export default function Home() {
             if (profile && profile.username) {
               setCurrentUserProfile(profile);
               setProfileCompleted(true);
-              setCurrentView((prev) => (prev === "profile-setup" ? "matching" : prev));
+              setCurrentView((prev) => (prev === "profile-setup" && !strangerRoomIdRef.current ? "matching" : prev));
               if (profile.language) setLanguage(profile.language);
               if (profile.interests && Array.isArray(profile.interests)) setInterests(profile.interests);
               if (profile.goal) setGoal(profile.goal);
@@ -675,6 +675,14 @@ export default function Home() {
     newSocket.on("waiting", () => {
       setWaiting(true);
       navigateTo("matching", false);
+    });
+
+    newSocket.on("already_in_match", (data?: { message?: string }) => {
+      showNotification(data?.message || "You are already in match");
+      setWaiting(false);
+      setMatchingMode("idle");
+      setSearchElapsedSeconds(0);
+      clearMatchingTimers();
     });
 
     newSocket.on("matched", (data: MatchedData) => {

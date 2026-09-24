@@ -129,6 +129,7 @@ describe('ChatGateway - Concurrent leaveChat race condition handling', () => {
   });
 
   it('should handle handleDisconnect with concurrent P2025 without crashing the process', async () => {
+    vi.useFakeTimers();
     const socket = createMockSocket('socket-disconnect');
     const chatId = 'chat-disconnect-456';
     const roomId = 'room-disconnect-456';
@@ -143,10 +144,14 @@ describe('ChatGateway - Concurrent leaveChat race condition handling', () => {
     // Must resolve cleanly without throwing
     await expect(gateway.handleDisconnect(socket)).resolves.toBeUndefined();
 
+    // Advance 15-second disconnect grace timer to simulate unrecovered disconnect
+    await vi.advanceTimersByTimeAsync(15000);
+
     // Sockets left and Redis cleaned up
     expect(socket.leave).toHaveBeenCalledWith(roomId);
     expect(mockRedis.removePresence).toHaveBeenCalledWith('socket-disconnect');
     expect(mockRedis.removeSocketMapping).toHaveBeenCalledWith('socket-disconnect');
+    vi.useRealTimers();
   });
 
   it('should rethrow non-P2025 errors so unexpected database errors are not hidden', async () => {
@@ -191,9 +196,14 @@ describe('ChatGateway - Phase 3 Step 2 Backend E2EE Transport & Storage', () => 
       chat: {
         findUnique: vi.fn().mockResolvedValue({ endedAt: null }),
         findFirst: vi.fn(),
+        create: vi.fn(),
+        update: vi.fn(),
       },
       user: {
         findUnique: vi.fn(),
+      },
+      friendship: {
+        findMany: vi.fn().mockResolvedValue([]),
       },
     };
 
@@ -201,6 +211,17 @@ describe('ChatGateway - Phase 3 Step 2 Backend E2EE Transport & Storage', () => 
       getIsConnected: vi.fn().mockReturnValue(true),
       checkRateLimit: vi.fn().mockResolvedValue(true),
       getSocketMapping: vi.fn(),
+      setSocketMapping: vi.fn().mockResolvedValue(undefined),
+      setPresence: vi.fn().mockResolvedValue(undefined),
+      removePresence: vi.fn().mockResolvedValue(undefined),
+      removeSocketMapping: vi.fn().mockResolvedValue(undefined),
+      addUserSocketPresence: vi.fn().mockResolvedValue(1),
+      removeUserSocketPresence: vi.fn().mockResolvedValue(0),
+      removeWaitingUserBySocketId: vi.fn().mockResolvedValue(undefined),
+      removeMatchState: vi.fn().mockResolvedValue(undefined),
+      setUserActiveMatch: vi.fn().mockResolvedValue(undefined),
+      getUserActiveMatch: vi.fn().mockResolvedValue(null),
+      removeUserActiveMatch: vi.fn().mockResolvedValue(undefined),
     };
 
     mockNotifications = {
@@ -966,6 +987,158 @@ describe('ChatGateway - Phase 3 Step 2 Backend E2EE Transport & Storage', () => 
         clientId: 'client-msg-ended',
         message: 'Chat has ended',
       });
+    });
+
+    it('Multi-Tab: findStranger emits already_in_match when user already has active session', async () => {
+      const socket = createMockSocket('sock-tab-2');
+      const userId = 'user-multitab-1';
+      const roomId = 'room-active-123';
+      const chatId = 'chat-active-123';
+
+      mockRedis.checkRateLimit = vi.fn().mockResolvedValue(true);
+      vi.spyOn(gateway as any, 'getUserId').mockResolvedValue(userId);
+      vi.spyOn(gateway as any, 'getUserProfile').mockResolvedValue({
+        id: userId,
+        username: 'MultiTabUser',
+      });
+      vi.spyOn(gateway as any, 'getIneligibleUserIds').mockResolvedValue(new Set());
+      vi.spyOn(gateway as any, 'getSocketContext').mockResolvedValue({ userId });
+
+      // Active match exists for this user in session state
+      await gateway.setUserActiveSession(userId, {
+        roomId,
+        chatId,
+        peerUserId: 'stranger-user-99',
+        score: 85,
+      });
+
+      // Chat is not ended
+      mockPrisma.chat.findUnique.mockResolvedValue({ endedAt: null });
+
+      await gateway.findStranger(socket, { language: 'English', interests: [], goal: 'casual-chat' });
+
+      // Must emit exact required text: "You are already in match"
+      expect(socket.emit).toHaveBeenCalledWith('already_in_match', {
+        message: 'You are already in match',
+      });
+      // Must NOT call pushWaitingUser or create chat
+      expect(mockPrisma.chat.create).not.toHaveBeenCalled();
+    });
+
+    it('Refresh / Reconnect: handleConnection restores active session to new socket', async () => {
+      const socket = createMockSocket('sock-refreshed');
+      const userId = 'user-refresh-1';
+      const roomId = 'room-refresh-123';
+      const chatId = 'chat-refresh-123';
+      const peerUserId = 'user-peer-456';
+
+      vi.spyOn(gateway as any, 'getUserId').mockResolvedValue(userId);
+      vi.spyOn(gateway as any, 'recordUserOnline').mockResolvedValue(undefined);
+      mockSessionTokenService.signToken = vi.fn().mockReturnValue('test-token');
+      socket.join = vi.fn();
+
+      // Active session exists
+      await gateway.setUserActiveSession(userId, {
+        roomId,
+        chatId,
+        peerUserId,
+        score: 90,
+      });
+
+      mockPrisma.chat.findUnique.mockResolvedValue({ endedAt: null });
+      vi.spyOn(gateway as any, 'getFormattedMessages').mockResolvedValue([
+        { id: 'm1', content: 'hello', senderId: peerUserId },
+      ]);
+      vi.spyOn(gateway as any, 'getUserProfile').mockResolvedValue({
+        id: peerUserId,
+        username: 'StrangerBob',
+      });
+
+      await gateway.handleConnection(socket);
+
+      // Sockets joined room
+      expect(socket.join).toHaveBeenCalledWith(roomId);
+      // Emitted matched with peer profile and restored room
+      expect(socket.emit).toHaveBeenCalledWith('matched', expect.objectContaining({
+        roomId,
+        chatId,
+        userId,
+        strangerUserId: peerUserId,
+        score: 90,
+      }));
+      // Emitted chat history
+      expect(socket.emit).toHaveBeenCalledWith('chat_history', expect.objectContaining({
+        userId,
+      }));
+    });
+
+    it('Disconnect Grace Period: does NOT immediately end session or emit stranger_offline on temporary disconnect', async () => {
+      vi.useFakeTimers();
+      const socket = createMockSocket('sock-temp-disconnect');
+      const userId = 'user-grace-1';
+      const roomId = 'room-grace-123';
+      const chatId = 'chat-grace-123';
+
+      mockRedis.getSocketMapping.mockResolvedValue({ roomId, chatId, userId });
+      vi.spyOn(gateway as any, 'getUserId').mockResolvedValue(userId);
+      mockPrisma.chat.findUnique.mockResolvedValue({ endedAt: null });
+
+      const leaveChatSpy = vi.spyOn(gateway as any, 'leaveChat');
+
+      // Socket disconnects (e.g. browser refresh begins)
+      await gateway.handleDisconnect(socket);
+
+      // During the 15-second grace window, leaveChat must NOT have been called yet
+      expect(leaveChatSpy).not.toHaveBeenCalled();
+
+      // If user reconnects before 15s expires:
+      const newSocket = createMockSocket('sock-reconnected');
+      newSocket.join = vi.fn();
+      await gateway.setUserActiveSession(userId, {
+        roomId,
+        chatId,
+        peerUserId: 'stranger-peer-99',
+        score: 75,
+      });
+      mockSessionTokenService.signToken = vi.fn().mockReturnValue('tok');
+      vi.spyOn(gateway as any, 'getFormattedMessages').mockResolvedValue([]);
+      vi.spyOn(gateway as any, 'getUserProfile').mockResolvedValue({ id: 'stranger-peer-99' });
+
+      await gateway.handleConnection(newSocket);
+
+      // Advance time past 15 seconds
+      await vi.advanceTimersByTimeAsync(20000);
+
+      // leaveChat must STILL not have been called because reconnection cancelled the grace timer!
+      expect(leaveChatSpy).not.toHaveBeenCalled();
+
+      vi.useRealTimers();
+    });
+
+    it('End Chat / Skip Stranger: releases active session lock so user can search again', async () => {
+      const socket = createMockSocket('sock-end-lock');
+      const userId = 'user-end-lock-1';
+      const roomId = 'room-lock-123';
+      const chatId = 'chat-lock-123';
+
+      await gateway.setUserActiveSession(userId, {
+        roomId,
+        chatId,
+        peerUserId: 'stranger-lock-99',
+        score: 80,
+      });
+
+      mockRedis.getSocketMapping.mockResolvedValue({ roomId, chatId, userId });
+      vi.spyOn(gateway as any, 'getUserId').mockResolvedValue(userId);
+      mockPrisma.chat.findUnique.mockResolvedValue({ endedAt: null });
+      mockPrisma.chat.update.mockResolvedValue({ id: chatId, endedAt: new Date() });
+
+      // Explicit end chat
+      await gateway.handleEndChat(socket);
+
+      // Active session must now be null
+      const activeSessionAfterEnd = await gateway.getUserActiveSession(userId);
+      expect(activeSessionAfterEnd).toBeNull();
     });
   });
 });

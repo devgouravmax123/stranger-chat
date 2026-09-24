@@ -179,6 +179,31 @@ describe('RedisService', () => {
       expect(blocked).toBe(false);
     });
 
+    it('should set, get, and remove user active match in Redis', async () => {
+      const matchData = {
+        roomId: 'room-123',
+        chatId: 'chat-456',
+        peerUserId: 'peer-789',
+        score: 95,
+        createdAt: 1000000,
+      };
+
+      await service.setUserActiveMatch('user-1', matchData);
+      expect(mockClient.set).toHaveBeenCalledWith(
+        'user:match:user-1',
+        JSON.stringify(matchData),
+        'EX',
+        86400,
+      );
+
+      mockClient.get.mockResolvedValue(JSON.stringify(matchData));
+      const res = await service.getUserActiveMatch('user-1');
+      expect(res).toEqual(matchData);
+
+      await service.removeUserActiveMatch('user-1');
+      expect(mockClient.del).toHaveBeenCalledWith('user:match:user-1');
+    });
+
     it('should gracefully clean up onModuleDestroy', async () => {
       await service.onModuleDestroy();
       expect(mockClient.quit).toHaveBeenCalled();
