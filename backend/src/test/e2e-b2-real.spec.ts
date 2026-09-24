@@ -142,7 +142,7 @@ describe('Real Browser & B2 E2E Verification', () => {
 
     // Verify object directly in B2
     const b2Obj = await s3.send(new GetObjectCommand({ Bucket: env.B2_BUCKET_NAME, Key: storageKey }));
-    const b2Bytes = Buffer.from(await b2Obj.Body.transformToByteArray());
+    const b2Bytes = Buffer.from(await b2Obj.Body!.transformToByteArray());
     expect(b2Bytes.equals(rawImageBytes)).toBe(true);
 
     // Verify bucket remains private (unauthenticated access must fail)
@@ -448,7 +448,7 @@ describe('Real Browser & B2 E2E Verification', () => {
 
     // Verify object in B2
     const b2Obj = await s3.send(new GetObjectCommand({ Bucket: env.B2_BUCKET_NAME, Key: storageKey }));
-    const b2Bytes = Buffer.from(await b2Obj.Body.transformToByteArray());
+    const b2Bytes = Buffer.from(await b2Obj.Body!.transformToByteArray());
     expect(b2Bytes.equals(rawStrangerImg)).toBe(true);
 
     // Send stranger message with v2 envelope

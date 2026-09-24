@@ -192,8 +192,8 @@ describe('AI Suggestions Integration (HTTP + Controller + Service + Redis + DB)'
     await redisService.del(`ai:daily-usage:${testUserId}:${todayDate}`);
     await redisService.del(`ai:cooldown:${testUserId}`);
 
-    // Test TIMEOUT mapping
-    stubGenerateContent.mockRejectedValueOnce(new Error('GEMINI_TIMEOUT'));
+    // Test TIMEOUT mapping (primary & fallback models)
+    stubGenerateContent.mockRejectedValue(new Error('GEMINI_TIMEOUT'));
 
     const timeoutRes = await request(app.getHttpServer())
       .post('/ai/conversation-suggestions')

@@ -584,7 +584,7 @@ describe('ChatGateway - Phase 3 Step 2 Backend E2EE Transport & Storage', () => 
         const { parseE2EEMediaEnvelope } = await import('./dto/e2ee-envelope.dto.js');
         const parsed = parseE2EEMediaEnvelope(JSON.stringify(validImageEnvelope));
         expect(parsed).toEqual(validImageEnvelope);
-        expect(parsed?.ct).toBe(validImageEnvelope.ct);
+        expect((parsed as any)?.ct).toBe(validImageEnvelope.ct);
       });
     });
 
