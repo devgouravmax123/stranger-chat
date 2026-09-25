@@ -955,7 +955,7 @@ export function useVideoCall({
     };
 
     // 8. Call Ended (Both)
-    const handleCallEnded = (data: { roomId: string; callId?: string }) => {
+    const handleCallEnded = (data: { roomId: string; callId?: string; reason?: string }) => {
       if (!data || data.roomId !== roomIdRef.current) return;
 
       const currentState = callStateRef.current;
@@ -970,7 +970,11 @@ export function useVideoCall({
 
       if (data.callId && callIdRef.current && data.callId !== callIdRef.current) return;
       teardownCall();
-      onNotification?.("The video call has ended.");
+      if (data.reason === "account_deleted") {
+        onNotification?.("The other user has deleted their account. The call has ended.");
+      } else {
+        onNotification?.("The video call has ended.");
+      }
     };
 
     // 9. Call Error

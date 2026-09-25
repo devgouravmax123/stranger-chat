@@ -57,6 +57,10 @@ describe('UsersService', () => {
           platformStats: {
             upsert: vi.fn().mockResolvedValue({ id: 'global', totalSignups: 1, totalDeletedAccounts: 0 }),
           },
+          mediaAttachment: {
+            findMany: vi.fn().mockResolvedValue([]),
+            deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+          },
         };
         return cb(txMock);
       }),
@@ -66,9 +70,14 @@ describe('UsersService', () => {
       cleanupUserRedisState: vi.fn().mockResolvedValue(undefined),
     };
 
+    const mockMediaService = {
+      deleteMediaObjects: vi.fn().mockResolvedValue(undefined),
+    };
+
     service = new UsersService(
       mockPrisma as unknown as PrismaService,
       mockRedis as unknown as RedisService,
+      mockMediaService as any,
     );
   });
 
@@ -228,6 +237,88 @@ describe('UsersService', () => {
       expect(mockRedis.cleanupUserRedisState).toHaveBeenCalledWith('user-to-delete');
       expect(result.success).toBe(true);
       expect(result.message).toContain('permanently deleted');
+    });
+
+    it('should collect B2 storage keys for sent & chat media, explicitly delete MediaAttachments, and delete B2 objects after commit', async () => {
+      mockPrisma.user.findUnique.mockResolvedValueOnce({ id: 'user-with-media' });
+
+      const mockDeleteMediaObjects = vi.fn().mockResolvedValue(undefined);
+      (service as any).mediaService = {
+        deleteMediaObjects: mockDeleteMediaObjects,
+      };
+
+      mockPrisma.$transaction.mockImplementationOnce(async (cb: any) => {
+        const tx = {
+          friendship: {
+            findMany: vi.fn().mockResolvedValue([{ id: 'f-1', chatId: 'chat-friend-1' }]),
+            deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+          },
+          chat: {
+            findMany: vi.fn().mockResolvedValue([{ id: 'chat-stranger-1' }]),
+            deleteMany: vi.fn().mockResolvedValue({ count: 2 }),
+          },
+          mediaAttachment: {
+            findMany: vi.fn().mockResolvedValue([
+              { storageKey: 'media/chat-friend-1/img1.bin' },
+              { storageKey: 'media/chat-stranger-1/voice1.bin' },
+              { storageKey: 'media/unattached/pending1.bin' },
+            ]),
+            deleteMany: vi.fn().mockResolvedValue({ count: 3 }),
+          },
+          message: { deleteMany: vi.fn().mockResolvedValue({ count: 5 }) },
+          report: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+          friendRequest: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+          block: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+          reaction: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+          notification: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+          user: { delete: vi.fn().mockResolvedValue({ id: 'user-with-media' }) },
+          platformStats: { upsert: vi.fn().mockResolvedValue({}) },
+        };
+        return cb(tx);
+      });
+
+      const res = await service.deleteAccount('user-with-media');
+
+      expect(res.success).toBe(true);
+      expect(res.storageCleanup).toBe('completed');
+      expect(mockDeleteMediaObjects).toHaveBeenCalledWith([
+        'media/chat-friend-1/img1.bin',
+        'media/chat-stranger-1/voice1.bin',
+        'media/unattached/pending1.bin',
+      ]);
+    });
+
+    it('should return storageCleanup: pending when B2 deletion fails post-commit', async () => {
+      mockPrisma.user.findUnique.mockResolvedValueOnce({ id: 'user-b2-fail' });
+
+      (service as any).mediaService = {
+        deleteMediaObjects: vi.fn().mockRejectedValue(new Error('B2 network error')),
+      };
+
+      mockPrisma.$transaction.mockImplementationOnce(async (cb: any) => {
+        const tx = {
+          friendship: { findMany: vi.fn().mockResolvedValue([]), deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+          chat: { findMany: vi.fn().mockResolvedValue([]), deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+          mediaAttachment: {
+            findMany: vi.fn().mockResolvedValue([{ storageKey: 'media/chat-1/img.bin' }]),
+            deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+          },
+          message: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+          report: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+          friendRequest: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+          block: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+          reaction: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+          notification: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+          user: { delete: vi.fn().mockResolvedValue({ id: 'user-b2-fail' }) },
+          platformStats: { upsert: vi.fn().mockResolvedValue({}) },
+        };
+        return cb(tx);
+      });
+
+      const res = await service.deleteAccount('user-b2-fail');
+
+      expect(res.success).toBe(true);
+      expect(res.storageCleanup).toBe('pending');
     });
   });
 

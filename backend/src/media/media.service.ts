@@ -160,4 +160,12 @@ export class MediaService {
       expiresIn: this.defaultExpirySeconds,
     };
   }
+
+  /**
+   * Batch deletes raw encrypted media objects from B2 by their storage keys.
+   */
+  async deleteMediaObjects(storageKeys: string[]): Promise<void> {
+    if (!storageKeys || storageKeys.length === 0) return;
+    await this.b2Storage.deleteObjects(storageKeys);
+  }
 }

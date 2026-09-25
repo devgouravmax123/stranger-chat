@@ -92,7 +92,7 @@ describe('Account Deletion Integration (Prisma + Redis + WebSocket Cleanup)', ()
     });
     testUserIds.push(userToDelete.id, counterpartUser.id);
 
-    // 2. Create related DB records (notification, friend request)
+    // 2. Create related DB records (notification, friend request, chat, messages, mediaAttachments)
     await prisma.notification.create({
       data: {
         userId: userToDelete.id,
@@ -107,6 +107,50 @@ describe('Account Deletion Integration (Prisma + Redis + WebSocket Cleanup)', ()
         senderId: userToDelete.id,
         receiverId: counterpartUser.id,
         status: 'PENDING',
+      },
+    });
+
+    const testChat = await prisma.chat.create({
+      data: {
+        userAId: userToDelete.id,
+        userBId: counterpartUser.id,
+      },
+    });
+
+    const testMsg = await prisma.message.create({
+      data: {
+        chatId: testChat.id,
+        senderId: userToDelete.id,
+        content: 'hello deletion test',
+      },
+    });
+
+    // Create an attached media attachment
+    await prisma.mediaAttachment.create({
+      data: {
+        id: `media-del-${Date.now()}-1`,
+        chatId: testChat.id,
+        senderId: userToDelete.id,
+        messageId: testMsg.id,
+        storageKey: `media/${testChat.id}/img1.bin`,
+        mediaType: 'image',
+        mimeType: 'image/jpeg',
+        fileSize: 1024,
+        iv: 'AAAAAAAAAAAAAAAA',
+      },
+    });
+
+    // Create an unattached/pending media attachment (messageId = null)
+    await prisma.mediaAttachment.create({
+      data: {
+        id: `media-del-${Date.now()}-2`,
+        chatId: testChat.id,
+        senderId: userToDelete.id,
+        storageKey: `media/${testChat.id}/pending2.bin`,
+        mediaType: 'audio',
+        mimeType: 'audio/webm',
+        fileSize: 2048,
+        iv: 'BBBBBBBBBBBBBBBB',
       },
     });
 
@@ -153,10 +197,29 @@ describe('Account Deletion Integration (Prisma + Redis + WebSocket Cleanup)', ()
     });
     expect(remainingRequests.length).toBe(0);
 
-    // 9. Verify Redis presence for user is cleared
+    // 9. Verify MediaAttachments (both attached and unattached) were purged
+    const remainingAttachments = await prisma.mediaAttachment.findMany({
+      where: {
+        OR: [
+          { senderId: userToDelete.id },
+          { chatId: testChat.id },
+        ],
+      },
+    });
+    expect(remainingAttachments.length).toBe(0);
+
+    // 10. Verify Chats and Messages were purged
+    const remainingChats = await prisma.chat.findMany({
+      where: { id: testChat.id },
+    });
+    expect(remainingChats.length).toBe(0);
+
+    // 11. Verify Redis presence and socket mapping for user are cleared
     if (redis.getIsConnected()) {
       const isOnline = await redis.isUserOnline(userToDelete.id);
       expect(isOnline).toBe(false);
+      const mapping = await redis.getSocketMapping(activeSocket.id);
+      expect(mapping).toBeNull();
     }
   });
 

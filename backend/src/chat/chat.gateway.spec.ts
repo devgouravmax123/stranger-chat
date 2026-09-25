@@ -1321,6 +1321,42 @@ describe('ChatGateway - Phase 3 Step 2 Backend E2EE Transport & Storage', () => 
       });
     });
   });
+
+  describe('handleUserAccountDeleted', () => {
+    it('should tear down active call, emit video_call_ended with reason account_deleted, and clear call session', async () => {
+      const mockServer: any = {
+        to: vi.fn().mockReturnValue({
+          emit: vi.fn(),
+        }),
+        sockets: {
+          sockets: new Map(),
+        },
+      };
+      gateway.server = mockServer;
+
+      // Register an active video call session for userA
+      gateway.registerActiveCallSession({
+        callId: 'call-del-1',
+        roomId: 'room-del-1',
+        callerId: 'user-to-delete',
+        receiverId: 'peer-user',
+        status: 'connected',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+
+      expect(gateway.getActiveCallForUser('user-to-delete')).not.toBeNull();
+
+      await gateway.handleUserAccountDeleted('user-to-delete');
+
+      // Verify video_call_ended was emitted to the room and peer with reason: 'account_deleted'
+      expect(mockServer.to).toHaveBeenCalledWith('room-del-1');
+      expect(mockServer.to).toHaveBeenCalledWith('user:peer-user');
+
+      // Verify active call session was cleared
+      expect(gateway.getActiveCallForUser('user-to-delete')).toBeNull();
+    });
+  });
 });
 
 

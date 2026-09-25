@@ -114,6 +114,8 @@ describe('RedisService', () => {
         sadd: vi.fn(),
         srem: vi.fn(),
         scard: vi.fn(),
+        smembers: vi.fn(),
+        scan: vi.fn(),
         quit: vi.fn(),
         pipeline: vi.fn(),
       };
@@ -202,6 +204,34 @@ describe('RedisService', () => {
 
       await service.removeUserActiveMatch('user-1');
       expect(mockClient.del).toHaveBeenCalledWith('user:match:user-1');
+    });
+
+    it('should clean up all user Redis state including sockets, mappings, and daily AI keys', async () => {
+      mockClient.smembers.mockResolvedValue(['sock-user-1', 'sock-user-2']);
+      mockClient.scan.mockResolvedValue(['0', ['ai:daily-usage:user-1:2026-09-25']]);
+      const queueItem = JSON.stringify({ socketId: 'sock-user-1', userId: 'user-1' });
+      const otherQueueItem = JSON.stringify({ socketId: 'sock-other', userId: 'other-user' });
+      mockClient.lrange.mockResolvedValue([queueItem, otherQueueItem]);
+
+      await service.cleanupUserRedisState('user-1');
+
+      // Verify socket mappings deleted
+      expect(mockClient.del).toHaveBeenCalledWith('socket:map:sock-user-1');
+      expect(mockClient.del).toHaveBeenCalledWith('socket:map:sock-user-2');
+
+      // Verify direct presence and match keys deleted
+      expect(mockClient.del).toHaveBeenCalledWith('presence:user:user-1');
+      expect(mockClient.del).toHaveBeenCalledWith('presence:sockets:user-1');
+      expect(mockClient.del).toHaveBeenCalledWith('ai:cooldown:user-1');
+      expect(mockClient.del).toHaveBeenCalledWith('ai:inflight:user-1');
+      expect(mockClient.del).toHaveBeenCalledWith('user:match:user-1');
+
+      // Verify daily AI usage keys scanned and deleted
+      expect(mockClient.del).toHaveBeenCalledWith('ai:daily-usage:user-1:2026-09-25');
+
+      // Verify user removed from queue
+      expect(mockClient.lrem).toHaveBeenCalledWith('matchmaking:waiting', 0, queueItem);
+      expect(mockClient.lrem).not.toHaveBeenCalledWith('matchmaking:waiting', 0, otherQueueItem);
     });
 
     it('should gracefully clean up onModuleDestroy', async () => {

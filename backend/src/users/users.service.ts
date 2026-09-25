@@ -12,6 +12,7 @@ import { CreateProfileDto } from './dto/create-profile.dto.js';
 import { UpdatePreferencesDto } from './dto/update-preferences.dto.js';
 import { normalizeInterest } from '../constants/interests.js';
 import { RedisService } from '../redis/redis.service.js';
+import { MediaService } from '../media/media.service.js';
 
 @Injectable()
 export class UsersService implements OnModuleInit {
@@ -20,6 +21,7 @@ export class UsersService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
+    private readonly mediaService: MediaService,
   ) {}
 
   async onModuleInit() {
@@ -349,7 +351,7 @@ export class UsersService implements OnModuleInit {
       throw new NotFoundException('User not found');
     }
 
-    // 1. Notify WebSocket gateway to disconnect sockets and clean active chats
+    // 1. Notify WebSocket gateway to disconnect sockets, tear down active calls, and clean active chats
     if (this.deletionHook) {
       try {
         await this.deletionHook(userId);
@@ -358,7 +360,10 @@ export class UsersService implements OnModuleInit {
       }
     }
 
-    // 2. Perform Atomic Database Purge in a Prisma Transaction
+    // 2. Identify all chat IDs and collect all B2 storageKeys belonging to the user BEFORE DB deletion
+    let storageKeysToDelete: string[] = [];
+
+    // Perform Atomic Database Purge in a Prisma Transaction
     await this.prisma.$transaction(async (tx) => {
       // a. Find all friendships involving this user
       const friendships = await tx.friendship.findMany({
@@ -386,26 +391,59 @@ export class UsersService implements OnModuleInit {
         ...strangerChats.map((c) => c.id),
       ];
 
-      // c. Delete messages in all those chats
+      // c. Collect all B2 storageKeys that belong to this user or to the chats being deleted
+      // Covers:
+      // - Media sent by user (attached or unattached/pending where messageId = null)
+      // - Media in any chats being deleted as part of user account deletion
+      const mediaRecords = await tx.mediaAttachment.findMany({
+        where: {
+          OR: [
+            { senderId: userId },
+            ...(allChatIds.length > 0 ? [{ chatId: { in: allChatIds } }] : []),
+          ],
+        },
+        select: { storageKey: true },
+      });
+
+      storageKeysToDelete = Array.from(
+        new Set(
+          mediaRecords
+            .map((m) => m.storageKey)
+            .filter((k): k is string => typeof k === 'string' && k.trim().length > 0),
+        ),
+      );
+
+      // d. Delete messages in all those chats
       if (allChatIds.length > 0) {
         await tx.message.deleteMany({
           where: { chatId: { in: allChatIds } },
         });
       }
 
-      // d. Delete any remaining messages sent by this user anywhere
+      // e. Delete any remaining messages sent by this user anywhere
       await tx.message.deleteMany({
         where: { senderId: userId },
       });
 
-      // e. Delete friendships
+      // f. Explicitly delete MediaAttachment records belonging to the user
+      // Ensures pending/unattached media (messageId = null) and any user media are removed even if chat not deleted
+      await tx.mediaAttachment.deleteMany({
+        where: {
+          OR: [
+            { senderId: userId },
+            ...(allChatIds.length > 0 ? [{ chatId: { in: allChatIds } }] : []),
+          ],
+        },
+      });
+
+      // g. Delete friendships
       await tx.friendship.deleteMany({
         where: {
           OR: [{ userAId: userId }, { userBId: userId }],
         },
       });
 
-      // f. Delete reports involving the chats or user
+      // h. Delete reports involving the chats or user
       await tx.report.deleteMany({
         where: {
           OR: [
@@ -416,43 +454,43 @@ export class UsersService implements OnModuleInit {
         },
       });
 
-      // g. Delete the chats
+      // i. Delete the chats
       if (allChatIds.length > 0) {
         await tx.chat.deleteMany({
           where: { id: { in: allChatIds } },
         });
       }
 
-      // h. Delete friend requests sent or received
+      // j. Delete friend requests sent or received
       await tx.friendRequest.deleteMany({
         where: {
           OR: [{ senderId: userId }, { receiverId: userId }],
         },
       });
 
-      // i. Delete blocks made or received
+      // k. Delete blocks made or received
       await tx.block.deleteMany({
         where: {
           OR: [{ blockerId: userId }, { blockedId: userId }],
         },
       });
 
-      // j. Delete reactions by user
+      // l. Delete reactions by user
       await tx.reaction.deleteMany({
         where: { userId },
       });
 
-      // k. Delete notifications for user
+      // m. Delete notifications for user
       await tx.notification.deleteMany({
         where: { userId },
       });
 
-      // l. Finally delete user record
+      // n. Finally delete user record
       await tx.user.delete({
         where: { id: userId },
       });
 
-      // m. Atomically increment totalDeletedAccounts counter
+      // o. Atomically increment totalDeletedAccounts counter
       await tx.platformStats.upsert({
         where: { id: 'global' },
         create: { id: 'global', totalSignups: 0, totalDeletedAccounts: 1 },
@@ -460,12 +498,28 @@ export class UsersService implements OnModuleInit {
       });
     });
 
-    // 3. Clean up Redis presence, temporary states, and AI quota keys
+    // 3. Purge B2 Encrypted Objects AFTER PostgreSQL transaction has committed successfully
+    let b2CleanupFailed = false;
+    if (storageKeysToDelete.length > 0) {
+      try {
+        await this.mediaService.deleteMediaObjects(storageKeysToDelete);
+        console.log(`[Account Deletion] Successfully deleted ${storageKeysToDelete.length} B2 media object(s) for user ${userId}`);
+      } catch (b2Err: any) {
+        b2CleanupFailed = true;
+        // Log clear server-side diagnostic without exposing credentials or throwing after DB commit
+        console.error(
+          `[Account Deletion] WARNING: Database records purged, but B2 media cleanup failed for user ${userId}. Error: ${b2Err?.message || b2Err}`,
+        );
+      }
+    }
+
+    // 4. Clean up Redis presence, temporary states, and AI quota keys
     await this.redis.cleanupUserRedisState(userId);
 
     return {
       success: true,
       message: 'Account and all associated user data permanently deleted.',
+      storageCleanup: b2CleanupFailed ? 'pending' : 'completed',
     };
   }
 }

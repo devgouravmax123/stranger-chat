@@ -138,4 +138,20 @@ describe('MediaService', () => {
       expect(mockB2Storage.getPresignedDownloadUrl).toHaveBeenCalledWith('media/chat-1/media-1.bin', 300);
     });
   });
+
+  describe('deleteMediaObjects', () => {
+    it('should delegate batch deletion to B2StorageService', async () => {
+      mockB2Storage.deleteObjects = vi.fn().mockResolvedValue(undefined);
+
+      await mediaService.deleteMediaObjects(['key1.bin', 'key2.bin']);
+      expect(mockB2Storage.deleteObjects).toHaveBeenCalledWith(['key1.bin', 'key2.bin']);
+    });
+
+    it('should do nothing if empty array passed', async () => {
+      mockB2Storage.deleteObjects = vi.fn().mockResolvedValue(undefined);
+
+      await mediaService.deleteMediaObjects([]);
+      expect(mockB2Storage.deleteObjects).not.toHaveBeenCalled();
+    });
+  });
 });

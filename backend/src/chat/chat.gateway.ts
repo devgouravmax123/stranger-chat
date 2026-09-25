@@ -388,6 +388,28 @@ export class ChatGateway implements OnGatewayInit {
   }
 
   async handleUserAccountDeleted(userId: string) {
+    // 1. Tear down any active video call involving this user and notify peer immediately
+    const activeCall = this.getActiveCallForUser(userId);
+    if (activeCall) {
+      const callPayload = {
+        roomId: activeCall.roomId,
+        callId: activeCall.callId,
+        reason: 'account_deleted',
+      };
+
+      // Notify the active room
+      this.server.to(activeCall.roomId).emit('video_call_ended', callPayload);
+
+      // In friend video calls, also notify the peer directly
+      const peerUserId = activeCall.callerId === userId ? activeCall.receiverId : activeCall.callerId;
+      if (peerUserId) {
+        this.server.to(`user:${peerUserId}`).emit('video_call_ended', callPayload);
+      }
+
+      this.clearActiveCallSession(activeCall.callId, activeCall.roomId, userId);
+    }
+
+    // 2. Disconnect all active sockets for this user
     const sockets = this.inMemoryUserSockets.get(userId);
     if (sockets) {
       for (const socketId of Array.from(sockets)) {

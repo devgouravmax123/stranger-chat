@@ -401,17 +401,68 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   async cleanupUserRedisState(userId: string): Promise<void> {
-    const keys = [
+    const socketsKey = `presence:sockets:${userId}`;
+
+    // 1. Gather all socket IDs associated with this user to clean their socket:map entries
+    let userSocketIds: string[] = [];
+    if (!this.isConnected) {
+      const fallbackSockets = this.fallbackUserSockets.get(userId);
+      if (fallbackSockets) {
+        userSocketIds = Array.from(fallbackSockets);
+        this.fallbackUserSockets.delete(userId);
+      }
+    } else {
+      try {
+        userSocketIds = await this.client.smembers(socketsKey);
+      } catch {}
+    }
+
+    // 2. Remove socket mapping keys for these sockets
+    for (const socketId of userSocketIds) {
+      await this.del(`socket:map:${socketId}`);
+      await this.del(`presence:user:${socketId}`);
+    }
+
+    // 3. Delete direct user keys
+    const directKeys = [
       `presence:user:${userId}`,
-      `presence:sockets:${userId}`,
+      socketsKey,
       `ai:cooldown:${userId}`,
       `ai:inflight:${userId}`,
       `user:match:${userId}`,
     ];
-    for (const k of keys) {
+    for (const k of directKeys) {
       await this.del(k);
     }
+
+    // 4. Scan and delete any ai:daily-usage:${userId}:* keys
     if (this.isConnected) {
+      try {
+        let cursor = '0';
+        do {
+          const [nextCursor, keys] = await this.client.scan(
+            cursor,
+            'MATCH',
+            `ai:daily-usage:${userId}:*`,
+            'COUNT',
+            50,
+          );
+          cursor = nextCursor;
+          if (keys && keys.length > 0) {
+            for (const k of keys) {
+              await this.del(k);
+            }
+          }
+        } while (cursor !== '0');
+      } catch (scanErr) {
+        // Fallback: also try deleting today's and yesterday's keys directly
+        const todayDate = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'Asia/Kolkata',
+        }).format(new Date());
+        await this.del(`ai:daily-usage:${userId}:${todayDate}`);
+      }
+
+      // 5. Remove user from matchmaking queue
       try {
         const items = await this.client.lrange('matchmaking:waiting', 0, -1);
         for (const item of items) {
@@ -423,6 +474,13 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
           } catch {}
         }
       } catch {}
+    } else {
+      // Offline fallback map cleanup
+      for (const [key] of Array.from(this.fallbackMemoryMap.entries())) {
+        if (key.startsWith(`ai:daily-usage:${userId}:`) || key.startsWith(`ratelimit:`) && key.endsWith(`:${userId}`)) {
+          this.fallbackMemoryMap.delete(key);
+        }
+      }
     }
   }
 
