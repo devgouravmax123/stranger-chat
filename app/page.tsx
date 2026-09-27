@@ -2537,8 +2537,8 @@ export default function Home() {
     setReplyingTo(null);
 
     try {
-      // Encrypt audio blob locally with AES-256-GCM + Media AAD - NEVER send raw audio bytes
-      const envelope = await encryptMediaBlob(
+      // Encrypt audio blob locally with AES-256-GCM and upload directly to Backblaze B2 via presigned PUT URL
+      const { envelope } = await uploadEncryptedMediaToB2(
         audioBlob,
         activeChatId,
         currentUserId,
@@ -2546,17 +2546,17 @@ export default function Home() {
         "audio"
       );
 
-      // Emit only the encrypted envelope via send_message
+      // Emit only after verified successful B2 PUT via send_message
       socket.emit("send_message", {
         envelope,
         clientId,
         replyToId: targetReplyingTo?.id,
       });
-    } catch (encErr) {
-      console.error("[E2EE] Failed to encrypt stranger voice note:", encErr);
+    } catch (uploadErr) {
+      console.error("[E2EE] Failed to upload stranger voice note to B2:", uploadErr);
       revokeSingleObjectUrl(localBlobUrl);
       setMessages((prev) => prev.filter((m) => m.clientId !== clientId));
-      showNotification("Voice note encryption failed. Message was not sent.");
+      showNotification("Voice note upload failed. Message was not sent.");
     }
   };
 
@@ -3209,8 +3209,8 @@ export default function Home() {
     setFriendReplyingTo(null);
 
     try {
-      // Encrypt audio blob locally with AES-256-GCM + Media AAD - NEVER send raw audio bytes
-      const envelope = await encryptMediaBlob(
+      // Encrypt audio blob locally with AES-256-GCM and upload directly to Backblaze B2 via presigned PUT URL
+      const { envelope } = await uploadEncryptedMediaToB2(
         audioBlob,
         activeChatId,
         userId,
@@ -3218,7 +3218,7 @@ export default function Home() {
         "audio"
       );
 
-      // Emit only the encrypted envelope via send_friend_message
+      // Emit only after verified successful B2 PUT via send_friend_message
       socket.emit("send_friend_message", {
         roomId: targetRoomId,
         senderId: userId,
@@ -3226,11 +3226,11 @@ export default function Home() {
         replyToId: targetReplyingTo?.id,
         clientId,
       });
-    } catch (encErr) {
-      console.error("[E2EE] Failed to encrypt friend voice note:", encErr);
+    } catch (uploadErr) {
+      console.error("[E2EE] Failed to upload friend voice note to B2:", uploadErr);
       revokeSingleObjectUrl(localBlobUrl);
       setFriendMessages((prev) => prev.filter((m) => m.clientId !== clientId));
-      showNotification("Voice note encryption failed. Message was not sent.");
+      showNotification("Voice note upload failed. Message was not sent.");
     }
   };
 
