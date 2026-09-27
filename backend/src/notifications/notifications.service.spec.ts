@@ -10,7 +10,8 @@ describe('NotificationsService', () => {
     mockPrisma = {
       notification: {
         create: vi.fn(),
-        findMany: vi.fn(),
+        findMany: vi.fn().mockResolvedValue([]),
+        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
         count: vi.fn(),
         updateMany: vi.fn(),
       },
@@ -84,10 +85,35 @@ describe('NotificationsService', () => {
         }),
       ).resolves.toBeDefined();
     });
+
+    it('should retain latest 5 notifications and delete older ones for the user', async () => {
+      mockPrisma.notification.create.mockResolvedValue({ id: 'notif-new', userId: 'user-1' });
+      mockPrisma.notification.findMany.mockResolvedValue([{ id: 'notif-old-6' }, { id: 'notif-old-7' }]);
+
+      await service.createNotification({
+        userId: 'user-1',
+        type: 'NEW_MESSAGE',
+        title: 'Title',
+        body: 'Body',
+      });
+
+      expect(mockPrisma.notification.findMany).toHaveBeenCalledWith({
+        where: { userId: 'user-1' },
+        orderBy: { createdAt: 'desc' },
+        skip: 5,
+        select: { id: true },
+      });
+
+      expect(mockPrisma.notification.deleteMany).toHaveBeenCalledWith({
+        where: {
+          id: { in: ['notif-old-6', 'notif-old-7'] },
+        },
+      });
+    });
   });
 
   describe('getNotifications', () => {
-    it('should query top 50 notifications ordered descending by createdAt', async () => {
+    it('should query top 5 notifications ordered descending by createdAt', async () => {
       const list = [{ id: 'n1' }, { id: 'n2' }];
       mockPrisma.notification.findMany.mockResolvedValue(list);
 
@@ -95,7 +121,7 @@ describe('NotificationsService', () => {
       expect(mockPrisma.notification.findMany).toHaveBeenCalledWith({
         where: { userId: 'user-1' },
         orderBy: { createdAt: 'desc' },
-        take: 50,
+        take: 5,
       });
       expect(result).toBe(list);
     });

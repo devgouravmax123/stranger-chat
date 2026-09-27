@@ -48,6 +48,26 @@ export class NotificationsService {
       },
     });
 
+    // Retain only the latest 5 notifications for this user; delete any older notifications
+    try {
+      const olderNotifications = await this.prisma.notification.findMany({
+        where: { userId: dto.userId },
+        orderBy: { createdAt: 'desc' },
+        skip: 5,
+        select: { id: true },
+      });
+
+      if (olderNotifications.length > 0) {
+        await this.prisma.notification.deleteMany({
+          where: {
+            id: { in: olderNotifications.map((n) => n.id) },
+          },
+        });
+      }
+    } catch (err) {
+      console.warn('Failed to prune old notifications:', err);
+    }
+
     if (this.notificationEmitter) {
       try {
         this.notificationEmitter(dto.userId, notification);
@@ -63,7 +83,7 @@ export class NotificationsService {
     return this.prisma.notification.findMany({
       where: { userId },
       orderBy: { createdAt: 'desc' },
-      take: 50,
+      take: 5,
     });
   }
 
