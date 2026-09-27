@@ -569,10 +569,12 @@ export default function Home() {
         }
       };
 
-      // For fresh visitors (no stored token), ensure the branded Chirp loading screen
-      // displays for a minimum of ~2.0 seconds before transitioning to Profile Setup.
-      // If returning user with valid token, transition immediately when ready.
-      if (!storedToken) {
+      // Ensure bootstrap completion runs in all paths:
+      // For fresh visitors (or visitors whose stale credentials were reset), preserve the branded
+      // Chirp loading screen for ~2.0 seconds before transitioning to Profile Setup.
+      // For returning users with a valid profile, complete immediately when ready.
+      const isFreshOrResetVisitor = !storedToken || !getPersistedAuth().token;
+      if (isFreshOrResetVisitor) {
         const elapsed = Date.now() - startTime;
         const remainingDelay = Math.max(0, 2000 - elapsed);
         if (remainingDelay > 0) {

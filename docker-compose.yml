@@ -39,11 +39,6 @@ services:
       - AI_GLOBAL_RPM_LIMIT=${AI_GLOBAL_RPM_LIMIT:-15}
       - AI_GLOBAL_RPD_LIMIT=${AI_GLOBAL_RPD_LIMIT:-500}
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
-      - B2_ENDPOINT=${B2_ENDPOINT}
-      - B2_REGION=${B2_REGION}
-      - B2_ACCESS_KEY_ID=${B2_ACCESS_KEY_ID}
-      - B2_SECRET_ACCESS_KEY=${B2_SECRET_ACCESS_KEY}
-      - B2_BUCKET_NAME=${B2_BUCKET_NAME}
     depends_on:
       redis:
         condition: service_healthy
@@ -78,7 +73,7 @@ services:
     networks:
       - chirp-network
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/"]
       interval: 20s
       timeout: 5s
       retries: 3
