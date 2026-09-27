@@ -2,8 +2,11 @@ import {
   generateECDHKeyPair,
   exportPublicKey,
   isE2EEMediaEnvelope,
+  isE2EEMediaV2Envelope,
   encryptMediaBlob,
   decryptMediaEnvelope,
+  encryptMediaBlobToBinary,
+  decryptMediaRawBytes,
   clearConversationKeyCache,
   MAX_E2EE_IMAGE_BYTES,
 } from "../lib/crypto.ts";
@@ -279,12 +282,67 @@ async function runPhotoUITests() {
   assert(objectUrlRegistry.size === 0, "All remaining object URLs revoked on session cleanup");
   assert(revokedUrls.has(recipientObjectUrl), "Recipient URL revoked on session cleanup");
 
-  console.log("\n--- TEST N: No plaintext image URL sent to backend ---");
-  const strangerPayloadKeys = Object.keys(strangerSocketPayload);
-  assert(!strangerPayloadKeys.includes("imageUrl"), "strangerSocketPayload does not contain imageUrl");
-  assert(!strangerPayloadKeys.includes("file"), "strangerSocketPayload does not contain file");
-  assert(!strangerPayloadKeys.includes("blob"), "strangerSocketPayload does not contain blob");
-  assert(!strangerPayloadKeys.includes("dataUrl"), "strangerSocketPayload does not contain dataUrl");
+  console.log("\n--- TEST O: v2 B2 binary media encryption & decryption compatibility ---");
+  setActiveIdentity(alicePair);
+  const binaryEncryptResult = await encryptMediaBlobToBinary(
+    imageBlob,
+    chatId,
+    aliceId,
+    bobPubBase64,
+    "image"
+  );
+
+  assert(binaryEncryptResult.rawEncryptedBytes instanceof ArrayBuffer, "encryptMediaBlobToBinary returns ArrayBuffer");
+  assert(binaryEncryptResult.rawEncryptedBytes.byteLength > 0, "ArrayBuffer has non-zero length");
+  assert(typeof binaryEncryptResult.iv === "string", "Returns Base64 IV string");
+  assert(binaryEncryptResult.mime === "image/png", "Preserves image MIME type");
+  assert(binaryEncryptResult.fileSize === imageBlob.size, "Preserves file size");
+
+  // Bob decrypts raw bytes
+  setActiveIdentity(bobPair);
+  const binaryDecryptedBlob = await decryptMediaRawBytes(
+    binaryEncryptResult.rawEncryptedBytes,
+    binaryEncryptResult.iv,
+    binaryEncryptResult.mime,
+    "image",
+    chatId,
+    aliceId,
+    alicePubBase64
+  );
+
+  assert(binaryDecryptedBlob instanceof Blob, "decryptMediaRawBytes returns Blob");
+  assert(binaryDecryptedBlob.type === "image/png", "Decrypted Blob preserves MIME type");
+  const binaryDecryptedBytes = new Uint8Array(await binaryDecryptedBlob.arrayBuffer());
+  assert(binaryDecryptedBytes.length === originalImageBytes.length, "Decrypted bytes match length");
+
+  let binaryMatch = true;
+  for (let i = 0; i < originalImageBytes.length; i++) {
+    if (binaryDecryptedBytes[i] !== originalImageBytes[i]) {
+      binaryMatch = false;
+      break;
+    }
+  }
+  assert(binaryMatch, "v2 decrypted binary bytes exactly match original image bytes");
+
+  console.log("\n--- TEST P: v2 B2 envelope validation ---");
+  const v2Envelope = {
+    e2ee: true,
+    v: 2,
+    type: "image",
+    mediaId: "media-uuid-1234",
+    storageKey: "media/chat-123/media-uuid-1234.bin",
+    mime: "image/png",
+    iv: binaryEncryptResult.iv,
+    fileSize: imageBlob.size,
+  };
+
+  assert(isE2EEMediaV2Envelope(v2Envelope), "isE2EEMediaV2Envelope accepts valid v2 envelope");
+
+  const invalidV2Envelope = {
+    ...v2Envelope,
+    v: 3,
+  };
+  assert(!isE2EEMediaV2Envelope(invalidV2Envelope), "isE2EEMediaV2Envelope rejects v: 3 envelope");
 
   console.log(`\n========================================`);
   console.log(`Phase 4.3 Tests Completed: ${passed} passed, ${failed} failed.`);

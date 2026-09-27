@@ -19,9 +19,13 @@ import { corsOptions } from '../common/cors.config.js';
 import {
   BackendE2EEMessageEnvelope,
   BackendE2EEMediaEnvelope,
+  BackendE2EEMediaV1Envelope,
+  BackendE2EEMediaV2Envelope,
   BackendE2EEAnyEnvelope,
   isValidE2EEEnvelope,
   isValidE2EEMediaEnvelope,
+  isValidE2EEMediaV1Envelope,
+  isValidE2EEMediaV2Envelope,
   parseE2EEEnvelope,
   parseE2EEMediaEnvelope,
   parseE2EEAnyEnvelope,
@@ -1009,7 +1013,7 @@ export class ChatGateway implements OnGatewayInit {
     let validEnvelope: BackendE2EEAnyEnvelope | null = null;
 
     if (data?.envelope) {
-      if (isValidE2EEMediaEnvelope(data.envelope)) {
+      if (isValidE2EEMediaV1Envelope(data.envelope)) {
         validEnvelope = {
           e2ee: true,
           v: 1,
@@ -1019,6 +1023,20 @@ export class ChatGateway implements OnGatewayInit {
           ct: data.envelope.ct,
         };
         // Serialize compact media envelope directly without inspecting or decrypting ciphertext
+        content = JSON.stringify(validEnvelope);
+        isE2EE = true;
+      } else if (isValidE2EEMediaV2Envelope(data.envelope)) {
+        validEnvelope = {
+          e2ee: true,
+          v: 2,
+          type: data.envelope.type,
+          mediaId: data.envelope.mediaId,
+          storageKey: data.envelope.storageKey,
+          mime: data.envelope.mime,
+          iv: data.envelope.iv,
+          fileSize: data.envelope.fileSize,
+        };
+        // Serialize v2 media reference envelope
         content = JSON.stringify(validEnvelope);
         isE2EE = true;
       } else if (isValidE2EEEnvelope(data.envelope)) {
@@ -1751,7 +1769,7 @@ export class ChatGateway implements OnGatewayInit {
     let validEnvelope: BackendE2EEAnyEnvelope | null = null;
 
     if (data?.envelope) {
-      if (isValidE2EEMediaEnvelope(data.envelope)) {
+      if (isValidE2EEMediaV1Envelope(data.envelope)) {
         validEnvelope = {
           e2ee: true,
           v: 1,
@@ -1761,6 +1779,20 @@ export class ChatGateway implements OnGatewayInit {
           ct: data.envelope.ct,
         };
         // Store opaque serialized media envelope directly
+        content = JSON.stringify(validEnvelope);
+        isE2EE = true;
+      } else if (isValidE2EEMediaV2Envelope(data.envelope)) {
+        validEnvelope = {
+          e2ee: true,
+          v: 2,
+          type: data.envelope.type,
+          mediaId: data.envelope.mediaId,
+          storageKey: data.envelope.storageKey,
+          mime: data.envelope.mime,
+          iv: data.envelope.iv,
+          fileSize: data.envelope.fileSize,
+        };
+        // Store opaque serialized v2 media reference directly
         content = JSON.stringify(validEnvelope);
         isE2EE = true;
       } else if (isValidE2EEEnvelope(data.envelope)) {

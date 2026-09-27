@@ -35,15 +35,25 @@ import {
   E2EEMessageEnvelope,
   E2EEMediaType,
   E2EEMediaEnvelope,
+  E2EEMediaV2Envelope,
+  E2EEAnyMediaEnvelope,
   isE2EEMediaEnvelope,
+  isE2EEMediaV2Envelope,
+  isE2EEAnyMediaEnvelope,
   packE2EEMedia,
   unpackE2EEMedia,
+  unpackE2EEAnyMedia,
   encryptMediaBlob,
   decryptMediaEnvelope,
   MAX_E2EE_IMAGE_BYTES,
   MAX_E2EE_AUDIO_BYTES,
   MAX_VOICE_DURATION_SECONDS,
 } from "@/lib/crypto";
+import {
+  uploadEncryptedMediaToB2,
+  downloadAndDecryptMediaFromB2,
+} from "@/lib/mediaUploader";
+
 
 // ==========================================
 // NAVIGATION & VIEW TYPES
@@ -770,7 +780,23 @@ export default function Home() {
             if (item.envelope) {
               if (activeChatId && peerKey) {
                 try {
-                  if (isE2EEMediaEnvelope(item.envelope)) {
+                  if (isE2EEMediaV2Envelope(item.envelope)) {
+                    const decryptedBlob = await downloadAndDecryptMediaFromB2(
+                      item.envelope,
+                      activeChatId,
+                      item.senderId,
+                      peerKey
+                    );
+                    const objectUrl = registerObjectUrl(URL.createObjectURL(decryptedBlob));
+                    itemType = item.envelope.type;
+                    if (item.envelope.type === "image") {
+                      imageUrl = objectUrl;
+                      textContent = item.text?.trim() ? item.text.trim() : "Photo message";
+                    } else {
+                      audioUrl = objectUrl;
+                      textContent = "Voice message";
+                    }
+                  } else if (isE2EEMediaEnvelope(item.envelope)) {
                     const decryptedBlob = await decryptMediaEnvelope(
                       item.envelope,
                       activeChatId,
@@ -798,24 +824,39 @@ export default function Home() {
                   }
                 } catch (decErr) {
                   console.warn("[E2EE] Failed to decrypt stranger history message:", decErr);
-                  textContent = item.envelope.type === "image" ? "Unable to decrypt this photo" : "Unable to decrypt this message";
+                  textContent = isE2EEAnyMediaEnvelope(item.envelope)
+                    ? item.envelope.type === "image"
+                      ? "Unable to decrypt this photo"
+                      : "Unable to decrypt this voice message"
+                    : "Unable to decrypt this message";
                 }
               } else {
-                textContent = item.envelope.type === "image" ? "Unable to decrypt this photo" : "Unable to decrypt this message";
+                textContent = isE2EEAnyMediaEnvelope(item.envelope)
+                  ? item.envelope.type === "image"
+                    ? "Unable to decrypt this photo"
+                    : "Unable to decrypt this voice message"
+                  : "Unable to decrypt this message";
               }
             } else if (typeof item.content === "string") {
-              const unpackedMedia = unpackE2EEMedia(item.content);
+              const unpackedMedia = unpackE2EEAnyMedia(item.content);
               const unpackedText = !unpackedMedia ? unpackE2EEMessage(item.content) : null;
 
               if (activeChatId && peerKey) {
                 try {
                   if (unpackedMedia) {
-                    const decryptedBlob = await decryptMediaEnvelope(
-                      unpackedMedia,
-                      activeChatId,
-                      item.senderId,
-                      peerKey
-                    );
+                    const decryptedBlob = isE2EEMediaV2Envelope(unpackedMedia)
+                      ? await downloadAndDecryptMediaFromB2(
+                          unpackedMedia,
+                          activeChatId,
+                          item.senderId,
+                          peerKey
+                        )
+                      : await decryptMediaEnvelope(
+                          unpackedMedia,
+                          activeChatId,
+                          item.senderId,
+                          peerKey
+                        );
                     const objectUrl = registerObjectUrl(URL.createObjectURL(decryptedBlob));
                     itemType = unpackedMedia.type;
                     if (unpackedMedia.type === "image") {
@@ -847,7 +888,7 @@ export default function Home() {
             let replyToPayload = item.replyTo;
             if (replyToPayload) {
               if (replyToPayload.content) {
-                const unpackedMediaReply = unpackE2EEMedia(replyToPayload.content);
+                const unpackedMediaReply = unpackE2EEAnyMedia(replyToPayload.content);
                 const unpackedTextReply = !unpackedMediaReply ? unpackE2EEMessage(replyToPayload.content) : null;
                 if ((unpackedMediaReply || unpackedTextReply) && activeChatId && peerKey) {
                   try {
@@ -1092,7 +1133,7 @@ export default function Home() {
         id: string;
         clientId?: string;
         text?: string;
-        envelope?: E2EEMessageEnvelope | E2EEMediaEnvelope;
+        envelope?: E2EEMessageEnvelope | E2EEMediaEnvelope | E2EEMediaV2Envelope;
         senderId: string;
         timestamp: number;
         type?: "text" | "audio" | "image";
@@ -1133,7 +1174,23 @@ export default function Home() {
 
           if (activeChatId && peerKey) {
             try {
-              if (isE2EEMediaEnvelope(data.envelope)) {
+              if (isE2EEMediaV2Envelope(data.envelope)) {
+                const decryptedBlob = await downloadAndDecryptMediaFromB2(
+                  data.envelope,
+                  activeChatId,
+                  data.senderId,
+                  peerKey
+                );
+                const objectUrl = registerObjectUrl(URL.createObjectURL(decryptedBlob));
+                msgType = data.envelope.type;
+                if (data.envelope.type === "image") {
+                  imageUrl = objectUrl;
+                  displayText = data.text?.trim() ? data.text.trim() : "Photo message";
+                } else {
+                  audioUrl = objectUrl;
+                  displayText = "Voice message";
+                }
+              } else if (isE2EEMediaEnvelope(data.envelope)) {
                 const decryptedBlob = await decryptMediaEnvelope(
                   data.envelope,
                   activeChatId,
@@ -1161,16 +1218,16 @@ export default function Home() {
               }
             } catch (decErr) {
               console.warn("[E2EE] Failed to decrypt stranger message:", decErr);
-              msgType = isE2EEMediaEnvelope(data.envelope) ? data.envelope.type : "text";
-              displayText = isE2EEMediaEnvelope(data.envelope)
+              msgType = isE2EEAnyMediaEnvelope(data.envelope) ? data.envelope.type : "text";
+              displayText = isE2EEAnyMediaEnvelope(data.envelope)
                 ? data.envelope.type === "image"
                   ? "Unable to decrypt this photo"
                   : "Unable to decrypt this voice message"
                 : "Unable to decrypt this message";
             }
           } else {
-            msgType = isE2EEMediaEnvelope(data.envelope) ? data.envelope.type : "text";
-            displayText = isE2EEMediaEnvelope(data.envelope)
+            msgType = isE2EEAnyMediaEnvelope(data.envelope) ? data.envelope.type : "text";
+            displayText = isE2EEAnyMediaEnvelope(data.envelope)
               ? data.envelope.type === "image"
                 ? "Unable to decrypt this photo"
                 : "Unable to decrypt this voice message"
@@ -1523,7 +1580,23 @@ export default function Home() {
             if (item.envelope) {
               if (activeChatId && peerKey) {
                 try {
-                  if (isE2EEMediaEnvelope(item.envelope)) {
+                  if (isE2EEMediaV2Envelope(item.envelope)) {
+                    const decryptedBlob = await downloadAndDecryptMediaFromB2(
+                      item.envelope,
+                      activeChatId,
+                      item.senderId,
+                      peerKey
+                    );
+                    const objectUrl = registerObjectUrl(URL.createObjectURL(decryptedBlob));
+                    itemType = item.envelope.type;
+                    if (item.envelope.type === "image") {
+                      imageUrl = objectUrl;
+                      textContent = item.text?.trim() ? item.text.trim() : "Photo message";
+                    } else {
+                      audioUrl = objectUrl;
+                      textContent = "Voice message";
+                    }
+                  } else if (isE2EEMediaEnvelope(item.envelope)) {
                     const decryptedBlob = await decryptMediaEnvelope(
                       item.envelope,
                       activeChatId,
@@ -1551,32 +1624,39 @@ export default function Home() {
                   }
                 } catch (decErr) {
                   console.warn("[E2EE] Failed to decrypt friend room history message:", decErr);
-                  textContent = isE2EEMediaEnvelope(item.envelope)
+                  textContent = isE2EEAnyMediaEnvelope(item.envelope)
                     ? item.envelope.type === "image"
                       ? "Unable to decrypt this photo"
                       : "Unable to decrypt this voice message"
                     : "Unable to decrypt this message";
                 }
               } else {
-                textContent = isE2EEMediaEnvelope(item.envelope)
+                textContent = isE2EEAnyMediaEnvelope(item.envelope)
                   ? item.envelope.type === "image"
                     ? "Unable to decrypt this photo"
                     : "Unable to decrypt this voice message"
                   : "Unable to decrypt this message";
               }
             } else if (typeof item.content === "string") {
-              const unpackedMedia = unpackE2EEMedia(item.content);
+              const unpackedMedia = unpackE2EEAnyMedia(item.content);
               const unpackedText = !unpackedMedia ? unpackE2EEMessage(item.content) : null;
 
               if (activeChatId && peerKey) {
                 try {
                   if (unpackedMedia) {
-                    const decryptedBlob = await decryptMediaEnvelope(
-                      unpackedMedia,
-                      activeChatId,
-                      item.senderId,
-                      peerKey
-                    );
+                    const decryptedBlob = isE2EEMediaV2Envelope(unpackedMedia)
+                      ? await downloadAndDecryptMediaFromB2(
+                          unpackedMedia,
+                          activeChatId,
+                          item.senderId,
+                          peerKey
+                        )
+                      : await decryptMediaEnvelope(
+                          unpackedMedia,
+                          activeChatId,
+                          item.senderId,
+                          peerKey
+                        );
                     const objectUrl = registerObjectUrl(URL.createObjectURL(decryptedBlob));
                     itemType = unpackedMedia.type;
                     if (unpackedMedia.type === "image") {
@@ -1597,18 +1677,10 @@ export default function Home() {
                   }
                 } catch (decErr) {
                   console.warn("[E2EE] Failed to decrypt friend room history content:", decErr);
-                  textContent = unpackedMedia
-                    ? unpackedMedia.type === "image"
-                      ? "Unable to decrypt this photo"
-                      : "Unable to decrypt this voice message"
-                    : "Unable to decrypt this message";
+                  textContent = "Unable to decrypt this message";
                 }
               } else if (unpackedMedia || unpackedText) {
-                textContent = unpackedMedia
-                  ? unpackedMedia.type === "image"
-                    ? "Unable to decrypt this photo"
-                    : "Unable to decrypt this voice message"
-                  : "Unable to decrypt this message";
+                textContent = "Unable to decrypt this message";
               }
             }
 
@@ -1616,7 +1688,7 @@ export default function Home() {
             let replyToPayload = item.replyTo;
             if (replyToPayload) {
               if (replyToPayload.content) {
-                const unpackedMediaReply = unpackE2EEMedia(replyToPayload.content);
+                const unpackedMediaReply = unpackE2EEAnyMedia(replyToPayload.content);
                 const unpackedTextReply = !unpackedMediaReply ? unpackE2EEMessage(replyToPayload.content) : null;
                 if ((unpackedMediaReply || unpackedTextReply) && activeChatId && peerKey) {
                   try {
@@ -1670,17 +1742,24 @@ export default function Home() {
           let audioUrl = isAudio ? rawContent.replace("audio:", "") : undefined;
           let imageUrl = isImage ? rawContent.replace("image:", "") : undefined;
 
-          const unpackedMedia = !isAudio && !isImage ? unpackE2EEMedia(rawContent) : null;
+          const unpackedMedia = !isAudio && !isImage ? unpackE2EEAnyMedia(rawContent) : null;
           const unpackedText = !isAudio && !isImage && !unpackedMedia ? unpackE2EEMessage(rawContent) : null;
 
           if (unpackedMedia && activeChatId && peerKey) {
             try {
-              const decryptedBlob = await decryptMediaEnvelope(
-                unpackedMedia,
-                activeChatId,
-                item.senderId,
-                peerKey
-              );
+              const decryptedBlob = isE2EEMediaV2Envelope(unpackedMedia)
+                ? await downloadAndDecryptMediaFromB2(
+                    unpackedMedia,
+                    activeChatId,
+                    item.senderId,
+                    peerKey
+                  )
+                : await decryptMediaEnvelope(
+                    unpackedMedia,
+                    activeChatId,
+                    item.senderId,
+                    peerKey
+                  );
               const objectUrl = registerObjectUrl(URL.createObjectURL(decryptedBlob));
               itemType = unpackedMedia.type;
               if (unpackedMedia.type === "image") {
@@ -1716,7 +1795,7 @@ export default function Home() {
           // Check raw entity replyTo
           let replyToPayload = item.replyTo;
           if (replyToPayload?.content) {
-            const unpackedMediaReply = unpackE2EEMedia(replyToPayload.content);
+            const unpackedMediaReply = unpackE2EEAnyMedia(replyToPayload.content);
             const unpackedTextReply = !unpackedMediaReply ? unpackE2EEMessage(replyToPayload.content) : null;
             if ((unpackedMediaReply || unpackedTextReply) && activeChatId && peerKey) {
               try {
@@ -1778,7 +1857,7 @@ export default function Home() {
       id: string;
       clientId?: string;
       text?: string;
-      envelope?: E2EEMessageEnvelope | E2EEMediaEnvelope;
+      envelope?: E2EEMessageEnvelope | E2EEMediaEnvelope | E2EEMediaV2Envelope;
       senderId: string;
       timestamp: number;
       type?: "text" | "audio" | "image";
@@ -1817,7 +1896,23 @@ export default function Home() {
 
         if (activeChatId && peerKey) {
           try {
-            if (isE2EEMediaEnvelope(data.envelope)) {
+            if (isE2EEMediaV2Envelope(data.envelope)) {
+              const decryptedBlob = await downloadAndDecryptMediaFromB2(
+                data.envelope,
+                activeChatId,
+                data.senderId,
+                peerKey
+              );
+              const objectUrl = registerObjectUrl(URL.createObjectURL(decryptedBlob));
+              msgType = data.envelope.type;
+              if (data.envelope.type === "image") {
+                imageUrl = objectUrl;
+                displayText = data.text?.trim() ? data.text.trim() : "Photo message";
+              } else {
+                audioUrl = objectUrl;
+                displayText = "Voice message";
+              }
+            } else if (isE2EEMediaEnvelope(data.envelope)) {
               const decryptedBlob = await decryptMediaEnvelope(
                 data.envelope,
                 activeChatId,
@@ -1845,16 +1940,16 @@ export default function Home() {
             }
           } catch (decErr) {
             console.warn("[E2EE] Failed to decrypt friend message:", decErr);
-            msgType = isE2EEMediaEnvelope(data.envelope) ? data.envelope.type : "text";
-            displayText = isE2EEMediaEnvelope(data.envelope)
+            msgType = isE2EEAnyMediaEnvelope(data.envelope) ? data.envelope.type : "text";
+            displayText = isE2EEAnyMediaEnvelope(data.envelope)
               ? data.envelope.type === "image"
                 ? "Unable to decrypt this photo"
                 : "Unable to decrypt this voice message"
               : "Unable to decrypt this message";
           }
         } else {
-          msgType = isE2EEMediaEnvelope(data.envelope) ? data.envelope.type : "text";
-          displayText = isE2EEMediaEnvelope(data.envelope)
+          msgType = isE2EEAnyMediaEnvelope(data.envelope) ? data.envelope.type : "text";
+          displayText = isE2EEAnyMediaEnvelope(data.envelope)
             ? data.envelope.type === "image"
               ? "Unable to decrypt this photo"
               : "Unable to decrypt this voice message"
@@ -2526,9 +2621,9 @@ export default function Home() {
     setReplyingTo(null);
 
     try {
-      // 2. Encrypt the original image file directly using AES-256-GCM + Media AAD
-      // The browser encrypts BEFORE sending. Backend receives ONLY the envelope!
-      const envelope = await encryptMediaBlob(
+      // 2. Encrypt locally and upload directly to Backblaze B2 via presigned PUT URL
+      // The browser encrypts BEFORE uploading. Backend and B2 receive ONLY encrypted binary ciphertext!
+      const { envelope } = await uploadEncryptedMediaToB2(
         imageFile,
         activeChatId,
         currentUserId,
@@ -2536,19 +2631,19 @@ export default function Home() {
         "image"
       );
 
-      // 3. Emit ONLY the encrypted envelope via send_message - NO raw bytes, NO data URLs, NO plaintext!
+      // 3. Emit ONLY after verified successful B2 PUT - NO raw bytes, NO data URLs, NO plaintext!
       socket.emit("send_message", {
         envelope,
         clientId,
         replyToId: targetReplyingTo?.id,
         text: captionText || undefined,
       });
-    } catch (encErr) {
-      console.error("[E2EE] Failed to encrypt stranger photo:", encErr);
+    } catch (uploadErr) {
+      console.error("[E2EE] Failed to upload stranger photo to B2:", uploadErr);
       // Clean up optimistic object URL on failure
       revokeSingleObjectUrl(localBlobUrl);
       setMessages((prev) => prev.filter((m) => m.clientId !== clientId));
-      showNotification("Photo encryption failed. Message was not sent.");
+      showNotification("Photo upload failed. Message was not sent.");
     }
   };
 
@@ -3213,8 +3308,8 @@ export default function Home() {
     setFriendReplyingTo(null);
 
     try {
-      // 2. Encrypt original image file directly with AES-256-GCM + Media AAD - NEVER send raw image bytes
-      const envelope = await encryptMediaBlob(
+      // 2. Encrypt locally and upload directly to Backblaze B2 via presigned PUT URL
+      const { envelope } = await uploadEncryptedMediaToB2(
         imageFile,
         activeChatId,
         userId,
@@ -3222,7 +3317,7 @@ export default function Home() {
         "image"
       );
 
-      // 3. Emit ONLY the encrypted envelope via send_friend_message
+      // 3. Emit ONLY after verified successful B2 PUT via send_friend_message
       socket.emit("send_friend_message", {
         roomId: targetRoomId,
         senderId: userId,
@@ -3231,11 +3326,11 @@ export default function Home() {
         clientId,
         text: captionText || undefined,
       });
-    } catch (encErr) {
-      console.error("[E2EE] Failed to encrypt friend photo:", encErr);
+    } catch (uploadErr) {
+      console.error("[E2EE] Failed to upload friend photo to B2:", uploadErr);
       revokeSingleObjectUrl(localBlobUrl);
       setFriendMessages((prev) => prev.filter((m) => m.clientId !== clientId));
-      showNotification("Photo encryption failed. Message was not sent.");
+      showNotification("Photo upload failed. Message was not sent.");
     }
   };
 
