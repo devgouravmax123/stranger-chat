@@ -22,6 +22,9 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   title: "Chirp - Instant Stranger Chat",
   description: "Connect anonymously and chat with strangers worldwide on Chirp.",
+  icons: {
+    icon: "/chirp-logo.svg",
+  },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
