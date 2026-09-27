@@ -19,13 +19,9 @@ import { corsOptions } from '../common/cors.config.js';
 import {
   BackendE2EEMessageEnvelope,
   BackendE2EEMediaEnvelope,
-  BackendE2EEMediaV1Envelope,
-  BackendE2EEMediaV2Envelope,
   BackendE2EEAnyEnvelope,
   isValidE2EEEnvelope,
   isValidE2EEMediaEnvelope,
-  isValidE2EEMediaV1Envelope,
-  isValidE2EEMediaV2Envelope,
   parseE2EEEnvelope,
   parseE2EEMediaEnvelope,
   parseE2EEAnyEnvelope,
@@ -388,28 +384,6 @@ export class ChatGateway implements OnGatewayInit {
   }
 
   async handleUserAccountDeleted(userId: string) {
-    // 1. Tear down any active video call involving this user and notify peer immediately
-    const activeCall = this.getActiveCallForUser(userId);
-    if (activeCall) {
-      const callPayload = {
-        roomId: activeCall.roomId,
-        callId: activeCall.callId,
-        reason: 'account_deleted',
-      };
-
-      // Notify the active room
-      this.server.to(activeCall.roomId).emit('video_call_ended', callPayload);
-
-      // In friend video calls, also notify the peer directly
-      const peerUserId = activeCall.callerId === userId ? activeCall.receiverId : activeCall.callerId;
-      if (peerUserId) {
-        this.server.to(`user:${peerUserId}`).emit('video_call_ended', callPayload);
-      }
-
-      this.clearActiveCallSession(activeCall.callId, activeCall.roomId, userId);
-    }
-
-    // 2. Disconnect all active sockets for this user
     const sockets = this.inMemoryUserSockets.get(userId);
     if (sockets) {
       for (const socketId of Array.from(sockets)) {
@@ -1035,39 +1009,7 @@ export class ChatGateway implements OnGatewayInit {
     let validEnvelope: BackendE2EEAnyEnvelope | null = null;
 
     if (data?.envelope) {
-      if (isValidE2EEMediaV2Envelope(data.envelope)) {
-        // Validate media attachment in database
-        const attachment = await this.prisma.mediaAttachment.findUnique({
-          where: { id: data.envelope.mediaId },
-        });
-
-        if (
-          !attachment ||
-          attachment.chatId !== chatId ||
-          attachment.senderId !== userId ||
-          attachment.messageId !== null ||
-          attachment.storageKey !== data.envelope.storageKey
-        ) {
-          socket.emit('message_error', {
-            clientId: data.clientId,
-            message: 'Invalid or unauthorized media attachment',
-          });
-          return;
-        }
-
-        validEnvelope = {
-          e2ee: true,
-          v: 2,
-          type: data.envelope.type,
-          mediaId: data.envelope.mediaId,
-          storageKey: data.envelope.storageKey,
-          mime: data.envelope.mime,
-          iv: data.envelope.iv,
-          fileSize: data.envelope.fileSize,
-        };
-        content = JSON.stringify(validEnvelope);
-        isE2EE = true;
-      } else if (isValidE2EEMediaV1Envelope(data.envelope)) {
+      if (isValidE2EEMediaEnvelope(data.envelope)) {
         validEnvelope = {
           e2ee: true,
           v: 1,
@@ -1120,14 +1062,6 @@ export class ChatGateway implements OnGatewayInit {
       },
     });
 
-    // If v2 media attachment, link messageId to mediaAttachment
-    if (validEnvelope && 'v' in validEnvelope && validEnvelope.v === 2 && 'mediaId' in validEnvelope) {
-      await this.prisma.mediaAttachment.update({
-        where: { id: validEnvelope.mediaId },
-        data: { messageId: message.id },
-      });
-    }
-
     // Send ACK to sender
     socket.emit('message_sent', {
       id: message.id,
@@ -1171,11 +1105,12 @@ export class ChatGateway implements OnGatewayInit {
       const isMedia = 'type' in validEnvelope && (validEnvelope.type === 'image' || validEnvelope.type === 'audio');
       const messageType = isMedia ? (validEnvelope as BackendE2EEMediaEnvelope).type : 'text';
 
-      // E2EE path: Emit envelope, DO NOT include text property
+      // E2EE path: Emit envelope, forwarding caption text if present for media messages
       socket.to(roomId).emit('receive_message', {
         id: message.id,
         clientId: data.clientId,
         envelope: validEnvelope,
+        text: data.text?.trim() || undefined,
         senderId: userId,
         timestamp: message.createdAt.getTime(),
         type: messageType,
@@ -1811,73 +1746,12 @@ export class ChatGateway implements OnGatewayInit {
     const authenticatedSenderId = socketContext.userId || data.senderId;
     if (!authenticatedSenderId) return;
 
-    let chatId: string | undefined = undefined;
-    if (roomId.startsWith('friend-')) {
-      const rest = roomId.slice('friend-'.length);
-      let targetUserId: string | null = null;
-      if (rest.startsWith(authenticatedSenderId + '-')) {
-        targetUserId = rest.slice(authenticatedSenderId.length + 1);
-      } else if (rest.endsWith('-' + authenticatedSenderId)) {
-        targetUserId = rest.slice(0, rest.length - authenticatedSenderId.length - 1);
-      }
-
-      if (targetUserId) {
-        const chat = await this.prisma.chat.findFirst({
-          where: {
-            OR: [
-              { userAId: authenticatedSenderId, userBId: targetUserId },
-              { userAId: targetUserId, userBId: authenticatedSenderId },
-            ],
-          },
-        });
-        if (chat) chatId = chat.id;
-      }
-      if (!chatId) {
-        chatId = socketContext.chatId;
-      }
-    } else {
-      chatId = socketContext.chatId;
-    }
-    if (!chatId) return;
-
     let content: string | null = null;
     let isE2EE = false;
     let validEnvelope: BackendE2EEAnyEnvelope | null = null;
 
     if (data?.envelope) {
-      if (isValidE2EEMediaV2Envelope(data.envelope)) {
-        // Validate media attachment in database
-        const attachment = await this.prisma.mediaAttachment.findUnique({
-          where: { id: data.envelope.mediaId },
-        });
-
-        if (
-          !attachment ||
-          attachment.chatId !== chatId ||
-          attachment.senderId !== authenticatedSenderId ||
-          attachment.messageId !== null ||
-          attachment.storageKey !== data.envelope.storageKey
-        ) {
-          socket.emit('friend_message_error', {
-            clientId: data.clientId,
-            message: 'Invalid or unauthorized media attachment',
-          });
-          return;
-        }
-
-        validEnvelope = {
-          e2ee: true,
-          v: 2,
-          type: data.envelope.type,
-          mediaId: data.envelope.mediaId,
-          storageKey: data.envelope.storageKey,
-          mime: data.envelope.mime,
-          iv: data.envelope.iv,
-          fileSize: data.envelope.fileSize,
-        };
-        content = JSON.stringify(validEnvelope);
-        isE2EE = true;
-      } else if (isValidE2EEMediaV1Envelope(data.envelope)) {
+      if (isValidE2EEMediaEnvelope(data.envelope)) {
         validEnvelope = {
           e2ee: true,
           v: 1,
@@ -1912,6 +1786,23 @@ export class ChatGateway implements OnGatewayInit {
       return;
     }
 
+    let chatId = socketContext.chatId;
+    if (!chatId && roomId.startsWith('friend-')) {
+      const parts = roomId.replace('friend-', '').split('-');
+      if (parts.length === 2) {
+        const chat = await this.prisma.chat.findFirst({
+          where: {
+            OR: [
+              { userAId: parts[0], userBId: parts[1] },
+              { userAId: parts[1], userBId: parts[0] },
+            ],
+          },
+        });
+        if (chat) chatId = chat.id;
+      }
+    }
+    if (!chatId) return;
+
     const message = await this.prisma.message.create({
       data: {
         content,
@@ -1922,14 +1813,6 @@ export class ChatGateway implements OnGatewayInit {
       },
       include: { replyTo: true },
     });
-
-    // If v2 media attachment, link messageId to mediaAttachment
-    if (validEnvelope && 'v' in validEnvelope && validEnvelope.v === 2 && 'mediaId' in validEnvelope) {
-      await this.prisma.mediaAttachment.update({
-        where: { id: validEnvelope.mediaId },
-        data: { messageId: message.id },
-      });
-    }
 
     // Determine replyTo structure without creating server-side plaintext reply previews for E2EE
     let replyToPayload: { id: string; content?: string; text?: string; type?: string } | null = null;
@@ -1965,11 +1848,12 @@ export class ChatGateway implements OnGatewayInit {
       const isMedia = 'type' in validEnvelope && (validEnvelope.type === 'image' || validEnvelope.type === 'audio');
       const messageType = isMedia ? (validEnvelope as BackendE2EEMediaEnvelope).type : 'text';
 
-      // E2EE path: Emit envelope, DO NOT include plaintext text
+      // E2EE path: Emit envelope, forwarding caption text if present for media messages
       this.server.to(roomId).emit('receive_friend_message', {
         id: message.id,
         clientId: data.clientId,
         envelope: validEnvelope,
+        text: data.text?.trim() || undefined,
         senderId: authenticatedSenderId,
         timestamp: message.createdAt.getTime(),
         type: messageType,
@@ -2055,21 +1939,14 @@ export class ChatGateway implements OnGatewayInit {
     if (!senderId) {
       senderId = contextUserId || (await this.getUserId(socket)) || undefined;
     }
-    if (!chatId && roomId.startsWith('friend-') && senderId) {
-      const rest = roomId.slice('friend-'.length);
-      let targetUserId: string | null = null;
-      if (rest.startsWith(senderId + '-')) {
-        targetUserId = rest.slice(senderId.length + 1);
-      } else if (rest.endsWith('-' + senderId)) {
-        targetUserId = rest.slice(0, rest.length - senderId.length - 1);
-      }
-
-      if (targetUserId) {
+    if (!chatId && roomId.startsWith('friend-')) {
+      const parts = roomId.replace('friend-', '').split('-');
+      if (parts.length === 2) {
         const chat = await this.prisma.chat.findFirst({
           where: {
             OR: [
-              { userAId: senderId, userBId: targetUserId },
-              { userAId: targetUserId, userBId: senderId },
+              { userAId: parts[0], userBId: parts[1] },
+              { userAId: parts[1], userBId: parts[0] },
             ],
           },
         });
@@ -2144,21 +2021,14 @@ export class ChatGateway implements OnGatewayInit {
     if (!senderId) {
       senderId = (await this.getUserId(socket)) || undefined;
     }
-    if (!chatId && roomId.startsWith('friend-') && senderId) {
-      const rest = roomId.slice('friend-'.length);
-      let targetUserId: string | null = null;
-      if (rest.startsWith(senderId + '-')) {
-        targetUserId = rest.slice(senderId.length + 1);
-      } else if (rest.endsWith('-' + senderId)) {
-        targetUserId = rest.slice(0, rest.length - senderId.length - 1);
-      }
-
-      if (targetUserId) {
+    if (!chatId && roomId.startsWith('friend-')) {
+      const parts = roomId.replace('friend-', '').split('-');
+      if (parts.length === 2) {
         const chat = await this.prisma.chat.findFirst({
           where: {
             OR: [
-              { userAId: senderId, userBId: targetUserId },
-              { userAId: targetUserId, userBId: senderId },
+              { userAId: parts[0], userBId: parts[1] },
+              { userAId: parts[1], userBId: parts[0] },
             ],
           },
         });

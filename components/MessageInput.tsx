@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import EmojiPicker, { EmojiClickData } from "emoji-picker-react";
-import VoiceRecorder from "./VoiceRecorder";
+import VoiceRecorder, { VoiceRecorderHandle } from "./VoiceRecorder";
 import { MAX_E2EE_IMAGE_BYTES } from "@/lib/crypto";
 import { Message } from "./MessageList";
 
@@ -39,7 +39,9 @@ export default function MessageInput({
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
   const [attachedPreviewUrl, setAttachedPreviewUrl] = useState<string | null>(null);
   const [imageError, setImageError] = useState<string | null>(null);
+  const [voiceRecordingState, setVoiceRecordingState] = useState<"idle" | "recording" | "recorded">("idle");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const voiceRecorderRef = useRef<VoiceRecorderHandle | null>(null);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isTypingRef = useRef(false);
 
@@ -204,9 +206,7 @@ export default function MessageInput({
       setAttachedFile(null);
       setAttachedPreviewUrl(null);
       setImageError(null);
-    }
-
-    if (message.trim() !== "") {
+    } else if (message.trim() !== "") {
       sendMessage();
     }
 
@@ -336,100 +336,133 @@ export default function MessageInput({
       {/* INPUT BAR */}
       {/* ====================================== */}
 
-      <div className="flex items-center gap-1.5 sm:gap-2">
-        {/* EMOJI (Completely removed on mobile, available on desktop) */}
-        <button
-          type="button"
-          onClick={() => setShowEmojiPicker((previous) => !previous)}
-          disabled={disabled}
-          className="hidden sm:flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 rounded-xl bg-zinc-800/90 hover:bg-zinc-700 border border-zinc-700/60 text-lg sm:text-xl transition disabled:cursor-not-allowed disabled:opacity-50 items-center justify-center text-zinc-200"
-          aria-label="Open emoji picker"
-        >
-          😊
-        </button>
+      {/* ====================================== */}
+      {/* INPUT BAR */}
+      {/* ====================================== */}
 
-        {/* PHOTO / MEDIA ATTACH (Hidden on mobile when user is typing or has entered text/file) */}
-        <button
-          type="button"
-          onClick={handlePhotoClick}
-          disabled={disabled}
-          className={`${
-            message.length > 0 || attachedFile ? "hidden sm:flex" : "flex"
-          } h-10 w-10 sm:h-11 sm:w-11 shrink-0 rounded-xl bg-zinc-800/90 hover:bg-zinc-700 border border-zinc-700/60 text-lg sm:text-xl transition disabled:cursor-not-allowed disabled:opacity-50 items-center justify-center text-zinc-200`}
-          title="Send photo"
-          aria-label="Upload photo"
-        >
-          📷
-        </button>
+      {(() => {
+        const hasText = message.trim().length > 0;
+        const hasInput = hasText || !!attachedFile;
+        const isVoiceActive = voiceRecordingState !== "idle";
 
-        {/* VOICE RECORDER (Hidden on mobile when user is typing or has entered text/file) */}
-        <div className={message.length > 0 || attachedFile ? "hidden sm:block shrink-0" : "shrink-0"}>
-          <VoiceRecorder
-            onRecorded={handleVoiceRecorded}
-            disabled={disabled || isVoiceDisabled}
-            disabledReason={voiceDisabledReason}
-          />
-        </div>
+        return (
+          <div className="w-full">
+            {/* If voice recording or recorded preview is active, render the full-width recorder interface */}
+            <div className={isVoiceActive ? "w-full" : "hidden"}>
+              <VoiceRecorder
+                ref={voiceRecorderRef}
+                onRecorded={handleVoiceRecorded}
+                disabled={disabled || isVoiceDisabled}
+                disabledReason={voiceDisabledReason}
+                onRecordingStateChange={setVoiceRecordingState}
+              />
+            </div>
 
-        {/* TEXT INPUT CONTAINER (Expands across full available width with embedded mobile send arrow) */}
-        <div className="relative min-w-0 flex-1 flex items-center">
-          <input
-            type="text"
-            aria-label={
-              attachedFile
-                ? "Add a caption"
-                : replyingTo
-                ? "Type your reply"
-                : "Type a message"
-            }
-            placeholder={
-              attachedFile
-                ? "Add a caption (optional)..."
-                : replyingTo
-                ? "Type your reply..."
-                : "Type a message..."
-            }
-            value={message}
-            onChange={handleInputChange}
-            onKeyDown={handleKeyDown}
-            disabled={disabled}
-            className={`w-full rounded-xl bg-zinc-950 border border-zinc-700/80 px-3 sm:px-4 py-2.5 sm:py-3 text-sm text-white placeholder-zinc-500 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 disabled:bg-zinc-900 transition ${
-              message.trim() !== "" || attachedFile ? "pr-10 sm:pr-4" : ""
-            }`}
-          />
-
-          {/* MOBILE INTEGRATED SEND ARROW BUTTON */}
-          {(message.trim() !== "" || attachedFile) && (
-            <button
-              type="button"
-              onClick={handleSend}
-              disabled={disabled}
-              className="sm:hidden absolute right-1.5 flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-600 text-white shadow-sm active:scale-95 transition hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed"
-              title="Send message"
-              aria-label="Send message"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 20 20"
-                fill="currentColor"
-                className="w-4 h-4"
+            {/* When not recording/previewing voice, render the standard text composer */}
+            <div className={isVoiceActive ? "hidden" : "flex items-center gap-1.5 sm:gap-2"}>
+              {/* EMOJI ICON (Always visible on desktop in idle & typing states) */}
+              <button
+                type="button"
+                onClick={() => setShowEmojiPicker((previous) => !previous)}
+                disabled={disabled}
+                className="hidden sm:flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 rounded-xl bg-zinc-800/90 hover:bg-zinc-700 border border-zinc-700/60 text-lg sm:text-xl transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 items-center justify-center text-zinc-200"
+                aria-label="Emoji"
               >
-                <path d="M3.105 2.289a.75.75 0 00-.826.95l1.414 4.925A1.5 1.5 0 004.978 9.25h4.772a.75.75 0 010 1.5H4.978a1.5 1.5 0 00-1.285 1.086l-1.414 4.925a.75.75 0 00.826.95 28.896 28.896 0 0015.293-7.154.75.75 0 000-1.112A28.896 28.896 0 003.105 2.289z" />
-              </svg>
-            </button>
-          )}
-        </div>
+                😊
+              </button>
 
-        {/* DESKTOP SEND BUTTON (Hidden on mobile, preserved on desktop) */}
-        <button
-          type="button"
-          onClick={handleSend}
-          disabled={disabled || (!attachedFile && message.trim() === "")}
-          className="hidden sm:inline-flex rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 px-3.5 sm:px-5 py-2.5 sm:py-3 font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-40 shrink-0 text-sm shadow-sm active:scale-95 items-center justify-center"
-        >
-          Send
-        </button>
-      </div>
+              {/* PHOTO / MEDIA ATTACH (Visible on desktop & mobile when input is empty, hidden when typing) */}
+              {!hasInput && (
+                <button
+                  type="button"
+                  onClick={handlePhotoClick}
+                  disabled={disabled}
+                  className="flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 rounded-xl bg-zinc-800/90 hover:bg-zinc-700 border border-zinc-700/60 text-lg sm:text-xl transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 items-center justify-center text-zinc-200"
+                  title="Send photo"
+                  aria-label="Attach media"
+                >
+                  📷
+                </button>
+              )}
+
+              {/* TEXT INPUT CONTAINER (Full width with embedded Voice Recorder when empty, WhatsApp-Style Arrow Send Button when typing) */}
+              <div className="relative min-w-0 flex-1 flex items-center">
+                <input
+                  type="text"
+                  aria-label={
+                    attachedFile
+                      ? "Add a caption"
+                      : replyingTo
+                      ? "Type your reply"
+                      : "Type a message"
+                  }
+                  placeholder={
+                    attachedFile
+                      ? "Add a caption (optional)..."
+                      : replyingTo
+                      ? "Type your reply..."
+                      : "Type a message..."
+                  }
+                  value={message}
+                  onChange={handleInputChange}
+                  onKeyDown={handleKeyDown}
+                  disabled={disabled}
+                  className="w-full rounded-xl bg-zinc-950 border border-zinc-700/80 px-3 sm:px-4 py-2.5 sm:py-3 text-sm text-white placeholder-zinc-500 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 disabled:bg-zinc-900 transition pr-11 sm:pr-12"
+                />
+
+                {/* EMBEDDED IDLE MIC TRIGGER (Inside composer right side when input is empty and voice is idle) */}
+                {!hasInput && !isVoiceActive && (
+                  <div className="absolute right-1 sm:right-1.5 flex items-center justify-center">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        voiceRecorderRef.current?.startRecording();
+                      }}
+                      disabled={disabled || isVoiceDisabled}
+                      title={
+                        disabled && voiceDisabledReason
+                          ? voiceDisabledReason
+                          : isVoiceDisabled && voiceDisabledReason
+                          ? voiceDisabledReason
+                          : "Record voice message"
+                      }
+                      aria-label="Record voice message"
+                      className="flex h-8 w-8 sm:h-8 sm:w-8 shrink-0 items-center justify-center rounded-lg bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 hover:text-white text-base sm:text-lg transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                    >
+                      🎙️
+                    </button>
+                  </div>
+                )}
+
+                {/* WHATSAPP-STYLE RIGHT ARROW SEND BUTTON (Inside composer right side when typing on both mobile & desktop) */}
+                {hasInput && (
+                  <button
+                    type="button"
+                    onClick={handleSend}
+                    disabled={disabled}
+                    className="absolute right-1 sm:right-1.5 flex h-8 w-8 sm:h-8 sm:w-8 items-center justify-center rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white shadow-md active:scale-95 transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                    title="Send message"
+                    aria-label="Send message"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                      className="w-4 h-4 sm:w-4.5 sm:h-4.5"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M3 10a.75.75 0 01.75-.75h10.638L10.23 5.29a.75.75 0 111.04-1.08l5.5 5.25a.75.75 0 010 1.08l-5.5 5.25a.75.75 0 11-1.04-1.08l4.158-3.96H3.75A.75.75 0 013 10z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

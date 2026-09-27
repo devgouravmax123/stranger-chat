@@ -1,19 +1,32 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useImperativeHandle, forwardRef } from "react";
 import { MAX_E2EE_AUDIO_BYTES, MAX_VOICE_DURATION_SECONDS } from "@/lib/crypto";
+
+export type VoiceRecorderHandle = {
+  startRecording: () => void;
+  stopAndPreview: () => void;
+  cancelRecording: () => void;
+};
 
 type VoiceRecorderProps = {
   onRecorded: (audioBlob: Blob) => void;
   disabled?: boolean;
   disabledReason?: string;
+  buttonClassName?: string;
+  onRecordingStateChange?: (state: "idle" | "recording" | "recorded") => void;
 };
 
-export default function VoiceRecorder({
-  onRecorded,
-  disabled = false,
-  disabledReason,
-}: VoiceRecorderProps) {
+const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>(function VoiceRecorder(
+  {
+    onRecorded,
+    disabled = false,
+    disabledReason,
+    buttonClassName,
+    onRecordingStateChange,
+  },
+  ref
+) {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -33,6 +46,19 @@ export default function VoiceRecorder({
   const [currentTime, setCurrentTime] = useState(0);
   const [previewError, setPreviewError] = useState("");
   const [isSending, setIsSending] = useState(false);
+
+  // Notify parent of recording state
+  useEffect(() => {
+    if (onRecordingStateChange) {
+      if (recording) {
+        onRecordingStateChange("recording");
+      } else if (previewUrl) {
+        onRecordingStateChange("recorded");
+      } else {
+        onRecordingStateChange("idle");
+      }
+    }
+  }, [recording, previewUrl, onRecordingStateChange]);
 
   durationRef.current = duration;
 
@@ -268,6 +294,12 @@ export default function VoiceRecorder({
     setPreviewError("");
   }, [recording]);
 
+  useImperativeHandle(ref, () => ({
+    startRecording,
+    stopAndPreview,
+    cancelRecording,
+  }));
+
   const sendRecordedVoice = (blobToSend?: Blob) => {
     const targetBlob = blobToSend || recordedBlob;
     if (!targetBlob || targetBlob.size === 0) return;
@@ -406,7 +438,7 @@ export default function VoiceRecorder({
       : 0;
 
   return (
-    <div className="relative flex items-center gap-2">
+    <div className="w-full flex items-center">
       {/* Hidden audio element for preview */}
       <audio
         ref={audioRef}
@@ -415,162 +447,161 @@ export default function VoiceRecorder({
         playsInline
       />
 
-      {/* RECORDING IN PROGRESS PILL */}
+      {/* STATE 2: ACTIVE RECORDING INLINE INSIDE COMPOSER */}
       {recording && (
-        <div className="flex items-center gap-2 rounded-xl bg-red-950/90 border border-red-800/90 px-3 py-1.5 text-sm text-red-300 animate-fadeIn shadow-lg">
-          <span className="relative flex h-3 w-3">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
-            <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500" />
-          </span>
-
-          <span className="font-mono font-bold text-xs text-white">
-            {formatDuration(duration)}
-          </span>
-
-          {/* STOP & REVIEW BUTTON */}
-          <button
-            type="button"
-            onClick={stopAndPreview}
-            title="Done recording"
-            aria-label="Done recording"
-            className="ml-1 rounded-lg bg-red-600 hover:bg-red-500 px-2.5 py-1 text-xs font-semibold text-white transition active:scale-95 cursor-pointer shadow-xs"
-          >
-            Done ⏹
-          </button>
-
-          {/* CANCEL BUTTON */}
-          <button
-            type="button"
-            onClick={cancelRecording}
-            title="Cancel recording"
-            aria-label="Cancel recording"
-            className="rounded-lg bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 px-2 py-1 text-xs font-semibold text-zinc-300 transition cursor-pointer"
-          >
-            ✕
-          </button>
-        </div>
-      )}
-
-      {/* PREVIEW CARD (MATCHES SECTION 25 SPECIFICATION) */}
-      {previewUrl && !recording && (
-        <div className="absolute bottom-full mb-3 right-0 sm:right-auto sm:left-0 w-72 sm:w-80 max-w-[calc(100vw-24px)] bg-zinc-900/95 border border-zinc-700/90 rounded-2xl p-3.5 sm:p-4 shadow-2xl backdrop-blur-xl z-30 animate-fadeIn text-zinc-100">
-          {/* Header */}
-          <div className="flex items-center justify-between pb-2.5 border-b border-zinc-800/80">
-            <div className="flex items-center gap-2">
-              <span className="text-base">🎙️</span>
-              <span className="text-xs font-bold text-white tracking-wide uppercase">
-                Voice Note Ready
-              </span>
-            </div>
-            <span className="text-xs font-mono font-semibold px-2 py-0.5 rounded-md bg-indigo-950/80 text-indigo-300 border border-indigo-800/40">
-              {formatDuration(totalPreviewDuration)}
+        <div className="w-full flex items-center justify-between gap-2 sm:gap-3 rounded-xl bg-zinc-950 border border-red-500/50 px-3 sm:px-4 py-2 sm:py-2.5 shadow-inner animate-fadeIn">
+          {/* Left: Pulsing Red Indicator & Elapsed Timer */}
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="relative flex h-3 w-3">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500" />
+            </span>
+            <span className="font-mono font-bold text-xs sm:text-sm text-red-400">
+              {formatDuration(duration)}
             </span>
           </div>
 
-          {/* Playback & Progress Scrubber */}
-          <div className="mt-3 flex items-center gap-3">
-            <button
-              type="button"
-              onClick={togglePreviewPlay}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold shadow-md shadow-indigo-600/30 transition active:scale-95 cursor-pointer"
-              aria-label={isPlaying ? "Pause voice note preview" : "Play voice note preview"}
-            >
-              {isPlaying ? (
-                <span>❚❚</span>
-              ) : (
-                <span className="ml-0.5">▶</span>
-              )}
-            </button>
-
-            <div className="flex-1 min-w-0">
-              {/* Scrubbing track */}
-              <div className="relative flex items-center h-4 cursor-pointer">
-                <input
-                  type="range"
-                  min={0}
-                  max={totalPreviewDuration}
-                  step={0.05}
-                  value={currentTime}
-                  onChange={handleSeek}
-                  aria-label="Seek voice note preview"
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                />
-                <div className="h-2 w-full rounded-full bg-zinc-800 overflow-hidden border border-zinc-700/50">
-                  <div
-                    className="h-full bg-gradient-to-r from-indigo-500 to-violet-500 transition-all duration-75"
-                    style={{ width: `${progressPercent}%` }}
-                  />
-                </div>
-              </div>
-
-              {/* Progress timers */}
-              <div className="flex items-center justify-between text-[11px] font-mono text-zinc-400 mt-1">
-                <span>{formatDuration(currentTime)}</span>
-                <span>{formatDuration(totalPreviewDuration)}</span>
-              </div>
-            </div>
+          {/* Center: Live Waveform Visualizer bars */}
+          <div className="flex-1 flex items-center justify-center gap-1 sm:gap-1.5 overflow-hidden px-2 h-7">
+            <div className="w-1 bg-red-500/80 rounded-full animate-pulse h-3" style={{ animationDuration: '0.4s' }} />
+            <div className="w-1 bg-red-400 rounded-full animate-pulse h-6" style={{ animationDuration: '0.6s' }} />
+            <div className="w-1 bg-red-500/90 rounded-full animate-pulse h-4" style={{ animationDuration: '0.3s' }} />
+            <div className="w-1 bg-red-400 rounded-full animate-pulse h-7" style={{ animationDuration: '0.5s' }} />
+            <div className="w-1 bg-red-500 rounded-full animate-pulse h-5" style={{ animationDuration: '0.45s' }} />
+            <div className="w-1 bg-red-400 rounded-full animate-pulse h-3" style={{ animationDuration: '0.35s' }} />
+            <div className="w-1 bg-red-500/90 rounded-full animate-pulse h-6" style={{ animationDuration: '0.55s' }} />
+            <div className="w-1 bg-red-400 rounded-full animate-pulse h-4" style={{ animationDuration: '0.4s' }} />
+            <div className="w-1 bg-red-500 rounded-full animate-pulse h-7" style={{ animationDuration: '0.65s' }} />
+            <div className="hidden xs:block w-1 bg-red-400 rounded-full animate-pulse h-5" style={{ animationDuration: '0.42s' }} />
+            <div className="hidden xs:block w-1 bg-red-500/80 rounded-full animate-pulse h-3" style={{ animationDuration: '0.38s' }} />
+            <div className="hidden sm:block w-1 bg-red-400 rounded-full animate-pulse h-6" style={{ animationDuration: '0.58s' }} />
+            <div className="hidden sm:block w-1 bg-red-500 rounded-full animate-pulse h-4" style={{ animationDuration: '0.48s' }} />
           </div>
 
-          {/* Error message */}
-          {previewError && (
-            <p className="mt-2.5 text-xs text-red-300 bg-red-950/60 border border-red-900/50 rounded-lg p-2 leading-relaxed">
-              ⚠️ {previewError}
-            </p>
-          )}
-
-          {/* Action Buttons: Delete & Send */}
-          <div className="mt-4 pt-3 border-t border-zinc-800/80 flex items-center justify-between gap-3">
+          {/* Right Actions: Discard (Trash) & Stop Recording (Checkmark/Done) */}
+          <div className="flex items-center gap-1.5 shrink-0">
             <button
               type="button"
               onClick={cancelRecording}
-              className="px-3.5 py-2 rounded-xl text-xs font-semibold text-zinc-400 hover:text-red-400 hover:bg-red-950/40 border border-zinc-800 hover:border-red-900/50 transition active:scale-95 flex items-center gap-1.5 cursor-pointer"
+              title="Cancel recording"
+              aria-label="Cancel recording"
+              className="flex h-8 w-8 items-center justify-center rounded-lg bg-zinc-800/80 hover:bg-zinc-700 text-zinc-400 hover:text-red-400 text-sm transition active:scale-95 cursor-pointer"
             >
-              <span>🗑</span>
-              <span>Delete</span>
+              🗑️
             </button>
-
             <button
               type="button"
-              onClick={() => sendRecordedVoice()}
-              disabled={isSending}
-              className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 shadow-md shadow-indigo-600/30 transition active:scale-95 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+              onClick={stopAndPreview}
+              title="Finish recording"
+              aria-label="Finish recording"
+              className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-600 hover:bg-red-500 text-white text-xs font-bold transition active:scale-95 cursor-pointer shadow-sm"
             >
-              <span>🚀</span>
-              <span>{isSending ? "Sending..." : "Send"}</span>
+              ⏹
             </button>
           </div>
         </div>
       )}
 
-      {/* IDLE MIC BUTTON */}
-      {!recording && (
+      {/* STATE 3: RECORDED AUDIO PREVIEW INLINE INSIDE COMPOSER */}
+      {previewUrl && !recording && (
+        <div className="w-full flex items-center justify-between gap-2 sm:gap-3 rounded-xl bg-zinc-950 border border-zinc-700/80 px-2.5 sm:px-3 py-1.5 sm:py-2 shadow-inner animate-fadeIn">
+          {/* Play/Pause Button */}
+          <button
+            type="button"
+            onClick={togglePreviewPlay}
+            className="flex h-8 w-8 sm:h-9 sm:w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs sm:text-sm font-bold shadow-md transition active:scale-95 cursor-pointer"
+            aria-label={isPlaying ? "Pause voice message" : "Play voice message"}
+            title={isPlaying ? "Pause" : "Play"}
+          >
+            {isPlaying ? (
+              <span>❚❚</span>
+            ) : (
+              <span className="ml-0.5">▶</span>
+            )}
+          </button>
+
+          {/* Timeline / Waveform Scrubber & Timer */}
+          <div className="flex-1 min-w-0 flex flex-col justify-center">
+            <div className="relative flex items-center h-4 cursor-pointer">
+              <input
+                type="range"
+                min={0}
+                max={totalPreviewDuration}
+                step={0.05}
+                value={currentTime}
+                onChange={handleSeek}
+                aria-label="Seek voice message preview"
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+              />
+              <div className="h-1.5 sm:h-2 w-full rounded-full bg-zinc-800 overflow-hidden border border-zinc-700/50">
+                <div
+                  className="h-full bg-gradient-to-r from-indigo-500 to-violet-500 transition-all duration-75"
+                  style={{ width: `${progressPercent}%` }}
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between text-[10px] sm:text-[11px] font-mono text-zinc-400 px-0.5">
+              <span>{formatDuration(currentTime)}</span>
+              <span>{formatDuration(totalPreviewDuration)}</span>
+            </div>
+          </div>
+
+          {/* Cancel/Discard Button */}
+          <button
+            type="button"
+            onClick={cancelRecording}
+            className="flex h-8 w-8 sm:h-9 sm:w-9 shrink-0 items-center justify-center rounded-lg bg-zinc-800/80 hover:bg-zinc-700 hover:text-red-400 text-zinc-400 transition active:scale-95 cursor-pointer"
+            title="Discard voice message"
+            aria-label="Cancel recording"
+          >
+            🗑️
+          </button>
+
+          {/* WhatsApp-Style Right Arrow Send Button */}
+          <button
+            type="button"
+            onClick={() => sendRecordedVoice()}
+            disabled={isSending}
+            className="flex h-8 w-8 sm:h-9 sm:w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white shadow-md active:scale-95 transition disabled:opacity-50 cursor-pointer"
+            title="Send voice message"
+            aria-label="Send message"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+              className="w-4 h-4 sm:w-5 sm:h-5"
+            >
+              <path
+                fillRule="evenodd"
+                d="M3 10a.75.75 0 01.75-.75h10.638L10.23 5.29a.75.75 0 111.04-1.08l5.5 5.25a.75.75 0 010 1.08l-5.5 5.25a.75.75 0 11-1.04-1.08l4.158-3.96H3.75A.75.75 0 013 10z"
+                clipRule="evenodd"
+              />
+            </svg>
+          </button>
+        </div>
+      )}
+
+      {/* STATE 1: IDLE MICROPHONE BUTTON (Inside input area) */}
+      {!recording && !previewUrl && (
         <button
           type="button"
-          onClick={previewUrl ? togglePreviewPlay : startRecording}
+          onClick={startRecording}
           disabled={disabled}
-          title={
-            disabled && disabledReason
-              ? disabledReason
-              : previewUrl
-              ? "Preview Voice Note"
-              : "Record Voice Note"
+          title={disabled && disabledReason ? disabledReason : "Record voice message"}
+          aria-label={disabled && disabledReason ? disabledReason : "Record voice message"}
+          className={
+            buttonClassName
+              ? buttonClassName
+              : "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 hover:text-white text-base transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
           }
-          aria-label={
-            disabled && disabledReason
-              ? disabledReason
-              : previewUrl
-              ? "Preview Voice Note"
-              : "Record Voice Note"
-          }
-          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border text-xl transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 ${
-            previewUrl
-              ? "bg-indigo-600/20 border-indigo-500 text-indigo-400 shadow-xs"
-              : "bg-zinc-800 hover:bg-zinc-700 border-zinc-700/60 text-zinc-200"
-          }`}
         >
           🎙️
         </button>
       )}
     </div>
   );
-}
+});
+
+export default VoiceRecorder;
