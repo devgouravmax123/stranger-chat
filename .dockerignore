@@ -1,34 +1,34 @@
-# ==========================================
-# Frontend .dockerignore
-# ==========================================
+# Build contexts and dependencies
 node_modules
 .next
 out
 build
 dist
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Git and IDE
 .git
 .gitignore
+.vscode
+.idea
+
+# Testing and coverage
+coverage
+.nyc_output
+playwright-report
+test-results
+load-tests/bin
+
+# Logs
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Test artifacts and coverage
-coverage
-test-results
-playwright-report
-.playwright
-*.spec.ts
-*.test.ts
-
-# Secrets and local configurations
-.env*.local
-.env
-.env.development
-.env.test
-
-# IDE and OS files
-.vscode
-.idea
+# OS metadata
 .DS_Store
 Thumbs.db

@@ -32,13 +32,18 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3001
-      - REDIS_URL=redis://redis:6379
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.1-flash-lite}
       - AI_SUGGESTION_COOLDOWN_SECONDS=${AI_SUGGESTION_COOLDOWN_SECONDS:-10}
       - AI_SUGGESTION_DAILY_LIMIT=${AI_SUGGESTION_DAILY_LIMIT:-5}
       - AI_GLOBAL_RPM_LIMIT=${AI_GLOBAL_RPM_LIMIT:-15}
       - AI_GLOBAL_RPD_LIMIT=${AI_GLOBAL_RPD_LIMIT:-500}
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
+      - B2_ENDPOINT=${B2_ENDPOINT}
+      - B2_REGION=${B2_REGION}
+      - B2_ACCESS_KEY_ID=${B2_ACCESS_KEY_ID}
+      - B2_SECRET_ACCESS_KEY=${B2_SECRET_ACCESS_KEY}
+      - B2_BUCKET_NAME=${B2_BUCKET_NAME}
     depends_on:
       redis:
         condition: service_healthy
