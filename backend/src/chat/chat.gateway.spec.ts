@@ -916,6 +916,40 @@ describe('ChatGateway - Phase 3 Step 2 Backend E2EE Transport & Storage', () => 
           type: 'audio',
         });
       });
+
+      it('T. Encrypted photo with caption preserves caption text in history', async () => {
+        const chatId = 'chat-history-media-caption';
+        const currentUserId = 'user-alice';
+
+        const imageMessageWithCaption = {
+          id: 'hist-img-caption-1',
+          content: JSON.stringify({
+            ...validImageEnvelope,
+            text: 'Look at this photo!',
+          }),
+          senderId: 'user-bob',
+          createdAt: new Date(1700000000000),
+          status: 'seen',
+          deliveredAt: null,
+          seenAt: null,
+          deletedAt: null,
+          replyTo: null,
+          reactions: [],
+        };
+
+        mockPrisma.message.findMany.mockResolvedValue([imageMessageWithCaption]);
+
+        const formatted = await gateway['getFormattedMessages'](chatId, currentUserId);
+        expect(formatted).toHaveLength(1);
+
+        expect(formatted[0].id).toBe('hist-img-caption-1');
+        expect((formatted[0] as any).envelope.e2ee).toBe(true);
+        expect((formatted[0] as any).envelope.v).toBe(1);
+        expect((formatted[0] as any).envelope.type).toBe('image');
+        expect((formatted[0] as any).envelope.mime).toBe('image/jpeg');
+        expect(formatted[0].type).toBe('image');
+        expect((formatted[0] as any).text).toBe('Look at this photo!');
+      });
     });
   });
 

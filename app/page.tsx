@@ -2184,7 +2184,13 @@ export default function Home() {
   }, [clearMatchingTimers]);
 
   const findStranger = async () => {
-    if (!socket || !userId) return;
+    const activeSocket = socket || socketRef.current;
+    const effectiveUserId = userId || userIdRef.current || getPersistedAuth().userId;
+
+    if (!activeSocket) {
+      showNotification("Connecting to server... Please wait a moment.");
+      return;
+    }
 
     const preferences: MatchPreferences = {
       language,
@@ -2195,62 +2201,65 @@ export default function Home() {
     clearMatchingTimers();
     setSearchElapsedSeconds(0);
     setMatchingMode("searching");
+    setMessages([]);
+    setReplyingTo(null);
+    setWaiting(true);
+    setStrangerTyping(false);
+    setFriendRequestSent(false);
+    setFriendRequestMessage("");
+    setStrangerUserId(null);
 
-    try {
-      const { token } = getPersistedAuth();
-      const prefRes = await fetch(`${BACKEND_URL}/users/${userId}/preferences`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify(preferences),
+    // Emit matchmaking event immediately so user is queued without delay
+    activeSocket.emit("find_stranger", preferences);
+
+    // Start search elapsed seconds timer
+    searchTimerRef.current = setInterval(() => {
+      setSearchElapsedSeconds((prev) => prev + 1);
+    }, 1000);
+
+    // If no match arrives within 2.5 seconds, display the polished No-One-Live-Right-Now prompt
+    noLiveTimeoutRef.current = setTimeout(() => {
+      setMatchingMode((current) => {
+        if (current === "searching") {
+          return "no-one-live";
+        }
+        return current;
       });
+    }, 2500);
 
-      if (prefRes.ok) {
-        const prefData = await prefRes.json();
-        setCurrentUserProfile((prev) =>
-          prev
-            ? {
-                ...prev,
-                language: prefData.language || language,
-                interests: prefData.interests || interests,
-                goal: prefData.goal || goal,
-              }
-            : null
-        );
+    // Sync preferences to backend in background without blocking matchmaking flow
+    if (effectiveUserId) {
+      try {
+        const { token } = getPersistedAuth();
+        fetch(`${BACKEND_URL}/users/${effectiveUserId}/preferences`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify(preferences),
+        })
+          .then((res) => (res.ok ? res.json() : null))
+          .then((prefData) => {
+            if (prefData) {
+              setCurrentUserProfile((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      language: prefData.language || language,
+                      interests: prefData.interests || interests,
+                      goal: prefData.goal || goal,
+                    }
+                  : null
+              );
+            }
+          })
+          .catch((err) => {
+            console.warn("Could not sync matching preferences in background:", err);
+          });
+      } catch (err) {
+        console.warn("Preference update error:", err);
       }
-
-      setMessages([]);
-      setReplyingTo(null);
-      setWaiting(true);
-      setStrangerTyping(false);
-      setFriendRequestSent(false);
-      setFriendRequestMessage("");
-      setStrangerUserId(null);
-
-      socket.emit("find_stranger", preferences);
-
-      // Start search elapsed seconds timer
-      searchTimerRef.current = setInterval(() => {
-        setSearchElapsedSeconds((prev) => prev + 1);
-      }, 1000);
-
-      // If no match arrives within 2.5 seconds, display the polished No-One-Live-Right-Now prompt
-      noLiveTimeoutRef.current = setTimeout(() => {
-        setMatchingMode((current) => {
-          if (current === "searching") {
-            return "no-one-live";
-          }
-          return current;
-        });
-      }, 2500);
-    } catch (error) {
-      console.error("Preference save error:", error);
-      clearMatchingTimers();
-      setWaiting(false);
-      setMatchingMode("idle");
-      showNotification("Could not save matching preferences.");
     }
   };
 

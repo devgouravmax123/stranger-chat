@@ -1023,7 +1023,10 @@ export class ChatGateway implements OnGatewayInit {
           ct: data.envelope.ct,
         };
         // Serialize compact media envelope directly without inspecting or decrypting ciphertext
-        content = JSON.stringify(validEnvelope);
+        content = JSON.stringify({
+          ...validEnvelope,
+          text: data.text?.trim() || undefined,
+        });
         isE2EE = true;
       } else if (isValidE2EEMediaV2Envelope(data.envelope)) {
         validEnvelope = {
@@ -1036,8 +1039,11 @@ export class ChatGateway implements OnGatewayInit {
           iv: data.envelope.iv,
           fileSize: data.envelope.fileSize,
         };
-        // Serialize v2 media reference envelope
-        content = JSON.stringify(validEnvelope);
+        // Serialize v2 media reference envelope with caption text if provided
+        content = JSON.stringify({
+          ...validEnvelope,
+          text: data.text?.trim() || undefined,
+        });
         isE2EE = true;
       } else if (isValidE2EEEnvelope(data.envelope)) {
         validEnvelope = {
@@ -1778,8 +1784,11 @@ export class ChatGateway implements OnGatewayInit {
           iv: data.envelope.iv,
           ct: data.envelope.ct,
         };
-        // Store opaque serialized media envelope directly
-        content = JSON.stringify(validEnvelope);
+        // Store opaque serialized media envelope directly with caption text if provided
+        content = JSON.stringify({
+          ...validEnvelope,
+          text: data.text?.trim() || undefined,
+        });
         isE2EE = true;
       } else if (isValidE2EEMediaV2Envelope(data.envelope)) {
         validEnvelope = {
@@ -1792,8 +1801,11 @@ export class ChatGateway implements OnGatewayInit {
           iv: data.envelope.iv,
           fileSize: data.envelope.fileSize,
         };
-        // Store opaque serialized v2 media reference directly
-        content = JSON.stringify(validEnvelope);
+        // Store opaque serialized v2 media reference directly with caption text if provided
+        content = JSON.stringify({
+          ...validEnvelope,
+          text: data.text?.trim() || undefined,
+        });
         isE2EE = true;
       } else if (isValidE2EEEnvelope(data.envelope)) {
         validEnvelope = {
@@ -2750,10 +2762,21 @@ export class ChatGateway implements OnGatewayInit {
       };
 
       if (anyEnvelope) {
-        // E2EE message: return envelope without decrypting or exposing a plaintext 'text' field
+        let captionText: string | undefined;
+        if (mediaEnvelope) {
+          try {
+            const parsed = JSON.parse(item.content);
+            if (typeof parsed?.text === 'string' && parsed.text.trim()) {
+              captionText = parsed.text.trim();
+            }
+          } catch {}
+        }
+
+        // E2EE message: return envelope without decrypting ciphertext, preserving top-level media caption text if present
         return {
           ...basePayload,
           envelope: anyEnvelope,
+          text: captionText,
         };
       }
 
